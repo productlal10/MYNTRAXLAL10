@@ -172,3 +172,4 @@ python3 main.py --export-only
 3. **Resilient Checkpointing**: State is saved per category, brand, and partition (`Roadster_Men`, `Roadster_Women`, etc.). If stopped or interrupted, it resumes without repeating already scraped items.
 # MYNTRAXLAL10
 # MYNTRAXLAL10
+# MYNTRAXLAL10
