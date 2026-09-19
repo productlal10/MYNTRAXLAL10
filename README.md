@@ -171,3 +171,4 @@ python3 main.py --export-only
 2. **Multi-Partition Sub-Querying**: For brands with >300 products (such as Roadster with 15,000+ items or HIGHLANDER with 9,000+ items), the scraper automatically partitions queries across genders (`Men`, `Women`, `Boys`, `Girls`) and fallback sort orders so that Myntra's pagination window never cuts off products.
 3. **Resilient Checkpointing**: State is saved per category, brand, and partition (`Roadster_Men`, `Roadster_Women`, etc.). If stopped or interrupted, it resumes without repeating already scraped items.
 # MYNTRAXLAL10
+# MYNTRAXLAL10
