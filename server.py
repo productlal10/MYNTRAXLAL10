@@ -384,6 +384,14 @@ def _estimate_inventory_totals(cur, scoped_products: int, avg_price: float, avg_
 
 
 def _get_scoped_inventory_units(cur, where_sql: str, params) -> int:
+    normalized_where = (where_sql or "").strip()
+    if not normalized_where or normalized_where == "1=1":
+        global_totals = api_cache.get("global_inventory_snapshot_totals_v1")
+        if not global_totals:
+            global_totals = _get_inventory_snapshot_totals(cur)
+            api_cache.set("global_inventory_snapshot_totals_v1", global_totals, ttl=600.0)
+        return int(global_totals.get("total_units") or 0)
+
     cur.execute(f"""
         SELECT COALESCE(SUM(CASE WHEN s.available = 1 THEN s.inventory_count ELSE 0 END), 0) as total_units
         FROM product_sizes s
@@ -1756,25 +1764,32 @@ def get_insights():
     cto_p25_price = float(avg_price)
     cto_p75_price = float(avg_price)
     cto_mode_price = int(avg_price or 0)
+    should_use_exact_pricing = (
+        total_products <= 50000
+        or any([filter_category, filter_gender, filter_subcategory, filter_brand, filter_brand_type, filter_brand_scale, filter_price_min, filter_price_max])
+    )
     try:
-        cur.execute(f"""
-            SELECT
-                COALESCE(AVG(p.selling_price), 0) AS mean_price,
-                COALESCE(AVG(p.mrp), 0) AS mean_mrp,
-                COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY p.selling_price), 0) AS median_price,
-                COALESCE(PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY p.selling_price), 0) AS p25_price,
-                COALESCE(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY p.selling_price), 0) AS p75_price,
-                COALESCE(MODE() WITHIN GROUP (ORDER BY p.selling_price), 0) AS mode_price
-            FROM products p
-            WHERE {where_sql} AND p.selling_price > 0;
-        """, where_params)
-        cto_row = cur.fetchone() or {}
-        cto_mean_price = float(cto_row["mean_price"] or avg_price)
-        cto_mean_mrp = float(cto_row["mean_mrp"] or avg_mrp_val)
-        cto_median_price = float(cto_row["median_price"] or avg_price)
-        cto_p25_price = float(cto_row["p25_price"] or avg_price)
-        cto_p75_price = float(cto_row["p75_price"] or avg_price)
-        cto_mode_price = int(round(float(cto_row["mode_price"] or avg_price or 0)))
+        if should_use_exact_pricing:
+            cur.execute(f"""
+                SELECT
+                    COALESCE(AVG(p.selling_price), 0) AS mean_price,
+                    COALESCE(AVG(p.mrp), 0) AS mean_mrp,
+                    COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY p.selling_price), 0) AS median_price,
+                    COALESCE(PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY p.selling_price), 0) AS p25_price,
+                    COALESCE(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY p.selling_price), 0) AS p75_price,
+                    COALESCE(MODE() WITHIN GROUP (ORDER BY p.selling_price), 0) AS mode_price
+                FROM products p
+                WHERE {where_sql} AND p.selling_price > 0;
+            """, where_params)
+            cto_row = cur.fetchone() or {}
+            cto_mean_price = float(cto_row["mean_price"] or avg_price)
+            cto_mean_mrp = float(cto_row["mean_mrp"] or avg_mrp_val)
+            cto_median_price = float(cto_row["median_price"] or avg_price)
+            cto_p25_price = float(cto_row["p25_price"] or avg_price)
+            cto_p75_price = float(cto_row["p75_price"] or avg_price)
+            cto_mode_price = int(round(float(cto_row["mode_price"] or avg_price or 0)))
+        else:
+            raise RuntimeError("skip exact overview pricing for very broad scopes")
     except Exception:
         sorted_sample_prices = sorted(sample_prices)
         if sorted_sample_prices:
