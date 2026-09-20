@@ -1006,7 +1006,7 @@ def _build_cto_scope(filters, include_brand=True, include_subcategory=True, incl
     where_params = []
 
     if include_brand and filter_brand and filter_brand != "all":
-        where_parts.append(f"LOWER({ref}brand) = LOWER(?)")
+        where_parts.append(f"{ref}brand = ?")
         where_params.append(filter_brand)
 
     if filter_category and filter_category != "all":
@@ -1021,7 +1021,7 @@ def _build_cto_scope(filters, include_brand=True, include_subcategory=True, incl
             where_params.append(filter_category)
 
     if include_subcategory and filter_subcategory and filter_subcategory != "all":
-        where_parts.append(f"LOWER({ref}sub_category) = LOWER(?)")
+        where_parts.append(f"{ref}sub_category = ?")
         where_params.append(filter_subcategory)
 
     if filter_brand_type in ("myntra", "myntra_in_house", "myntra in-house labels"):
