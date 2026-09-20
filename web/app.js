@@ -262,6 +262,7 @@ async function initApp() {
   }
   checkAuthSession();
   setupKeyboardShortcuts();
+  bindCTOFacetInteractions();
   checkScraperStatus();
   setInterval(checkScraperStatus, 8000); // reduced from 4s to avoid hammering
 
@@ -532,10 +533,19 @@ function handleGlobalSearch(e) {
 // Phase-1 stats cache for quick re-renders
 let _cachedStats = null;
 let _insightsLoading = false;
-let _ctoFacetState = { brands: [], subcategories: [] };
+let _ctoFacetState = {
+  brands: [],
+  subcategories: [],
+  key: '',
+  loading: false,
+  promise: null
+};
 let _dashboardRequestId = 0;
 let _dashboardFetchController = null;
 const MAX_CTO_BRAND_OPTIONS_WITHOUT_SEARCH = 250;
+const CTO_FACETS_DEFER_MS = 900;
+let _ctoFacetDeferredTimer = null;
+let _ctoFacetInteractionBound = false;
 
 function readCTOFilterState() {
   return {
@@ -591,6 +601,108 @@ async function fetchJson(url, options = {}) {
   return response.json();
 }
 
+function getCTOFacetQuery(filters = readCTOFilterState()) {
+  return buildCTOQueryString(filters, { includeSort: false });
+}
+
+function markCTOFacetsPending(filters = readCTOFilterState()) {
+  _ctoFacetState.key = getCTOFacetQuery(filters);
+  _ctoFacetState.loading = true;
+
+  const brandHintEl = document.getElementById('ctoBrandHint');
+  if (brandHintEl) {
+    brandHintEl.textContent = 'Loading dynamic brand options for the current scope...';
+  }
+
+  const subHintEl = document.getElementById('ctoSubcategoryHint');
+  if (subHintEl) {
+    subHintEl.textContent = 'Loading dynamic subcategory options for the current scope...';
+  }
+}
+
+async function ensureCTOFacetsLoaded(filters = readCTOFilterState(), { force = false } = {}) {
+  const facetQuery = getCTOFacetQuery(filters);
+  if (!force && _ctoFacetState.key === facetQuery && _ctoFacetState.brands.length > 0 && _ctoFacetState.subcategories.length > 0) {
+    return _ctoFacetState;
+  }
+  if (!force && _ctoFacetState.loading && _ctoFacetState.promise && _ctoFacetState.key === facetQuery) {
+    return _ctoFacetState.promise;
+  }
+
+  _ctoFacetState.key = facetQuery;
+  _ctoFacetState.loading = true;
+  const currentKey = facetQuery;
+  const promise = fetchCachedJson('/api/insights/facets' + facetQuery, { ttlMs: 30000 })
+    .then(facetsRes => {
+      if (_ctoFacetState.key !== currentKey) {
+        return _ctoFacetState;
+      }
+
+      renderCTOBrandScaleMeta(facetsRes);
+      if (Array.isArray(facetsRes.available_subcategories)) {
+        renderSubcategoriesDropdown(facetsRes);
+      }
+      if (Array.isArray(facetsRes.available_brands)) {
+        renderBrandsDropdown(facetsRes);
+      }
+      renderCTOFilterHints(facetsRes);
+      _ctoFacetState.loading = false;
+      _ctoFacetState.promise = null;
+      return facetsRes;
+    })
+    .catch(err => {
+      if (_ctoFacetState.key === currentKey) {
+        _ctoFacetState.loading = false;
+        _ctoFacetState.promise = null;
+      }
+      throw err;
+    });
+
+  _ctoFacetState.promise = promise;
+  return promise;
+}
+
+function scheduleCTOFacetsLoad(filters = readCTOFilterState(), { delayMs = CTO_FACETS_DEFER_MS, force = false } = {}) {
+  if (_ctoFacetDeferredTimer) {
+    clearTimeout(_ctoFacetDeferredTimer);
+  }
+  markCTOFacetsPending(filters);
+
+  _ctoFacetDeferredTimer = setTimeout(() => {
+    _ctoFacetDeferredTimer = null;
+    ensureCTOFacetsLoaded(filters, { force }).catch(err => {
+      if (err?.name === 'AbortError') return;
+      console.warn('Facet load error (non-fatal):', err);
+    });
+  }, Math.max(0, delayMs));
+}
+
+function primeCTOFacetsFromInteraction() {
+  if (_ctoFacetDeferredTimer) {
+    clearTimeout(_ctoFacetDeferredTimer);
+    _ctoFacetDeferredTimer = null;
+  }
+  if (_ctoFacetState.loading && _ctoFacetState.promise) return;
+  markCTOFacetsPending(readCTOFilterState());
+  ensureCTOFacetsLoaded().catch(err => {
+    if (err?.name === 'AbortError') return;
+    console.warn('Facet load error (non-fatal):', err);
+  });
+}
+
+function bindCTOFacetInteractions() {
+  if (_ctoFacetInteractionBound) return;
+  _ctoFacetInteractionBound = true;
+
+  ['ctoSubcategorySelect', 'ctoBrandSearchInput', 'ctoBrandSelect'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    ['focus', 'pointerdown'].forEach(eventName => {
+      el.addEventListener(eventName, primeCTOFacetsFromInteraction, { passive: true });
+    });
+  });
+}
+
 async function fetchStatsAndInsights() {
   const requestId = ++_dashboardRequestId;
   if (_dashboardFetchController) {
@@ -602,6 +714,7 @@ async function fetchStatsAndInsights() {
     const filters = readCTOFilterState();
     const qs = buildCTOQueryString(filters);
     updateCTOFilterBadge(filters);
+    scheduleCTOFacetsLoad(filters);
 
     // PHASE 1: Fetch stats immediately
     const statsRes = await fetchJson('/api/stats' + qs, { signal });
@@ -609,24 +722,6 @@ async function fetchStatsAndInsights() {
     _cachedStats = statsRes;
     renderDashboardKPIs(statsRes, {});
     renderBrandTypeDonut(statsRes);
-
-    fetchJson('/api/insights/facets' + buildCTOQueryString(filters, { includeSort: false }), { signal })
-      .then(facetsRes => {
-        if (requestId !== _dashboardRequestId) return;
-        renderCTOBrandScaleMeta(facetsRes);
-        if (Array.isArray(facetsRes.available_subcategories)) {
-          renderSubcategoriesDropdown(facetsRes);
-        }
-        if (Array.isArray(facetsRes.available_brands)) {
-          renderBrandsDropdown(facetsRes);
-        }
-        renderCTOFilterHints(facetsRes);
-      })
-      .catch(err => {
-        if (requestId !== _dashboardRequestId) return;
-        if (err?.name === 'AbortError') return;
-        console.warn('Facet load error (non-fatal):', err);
-      });
 
     // PHASE 2: Fetch insights in background
     _insightsLoading = true;
@@ -879,6 +974,10 @@ function applyCTOBrandOptions(selectedValue = 'all') {
 }
 
 function filterCTOBrandOptions() {
+  if (!_ctoFacetState.brands.length && !_ctoFacetState.loading) {
+    primeCTOFacetsFromInteraction();
+  }
+
   const currentVal = document.getElementById('ctoBrandSelect')?.value || 'all';
   applyCTOBrandOptions(currentVal);
   renderCTOFilterHints({
@@ -901,6 +1000,16 @@ function renderCTOFilterHints(insights) {
   const visibleBrands = brandSearchTerm
     ? (_ctoFacetState.brands || []).filter(b => b.value.toLowerCase().includes(brandSearchTerm.toLowerCase())).length
     : totalBrands;
+
+  if (_ctoFacetState.loading && totalBrands === 0 && totalSubcats === 0) {
+    if (brandHintEl) {
+      brandHintEl.textContent = 'Loading dynamic brand options for the current scope...';
+    }
+    if (subHintEl) {
+      subHintEl.textContent = 'Loading dynamic subcategory options for the current scope...';
+    }
+    return;
+  }
 
   if (brandHintEl) {
     if (brandSearchTerm) {
