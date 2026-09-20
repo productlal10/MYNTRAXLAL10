@@ -1061,6 +1061,19 @@ class Database:
         self.ensure_analytics_enrichment()
         conn = self._get_connection()
         cur = conn.cursor()
+        cur.execute("""
+            SELECT DISTINCT analytics_date
+            FROM daily_sales_analytics
+            ORDER BY analytics_date DESC
+            LIMIT 7;
+        """)
+        analytics_dates = [row[0] for row in cur.fetchall() if row and row[0]]
+        latest_date = analytics_dates[0] if analytics_dates else None
+        analytics_date_sql = ""
+        analytics_date_params = []
+        if analytics_dates:
+            analytics_date_sql = "WHERE analytics_date = ANY(?)"
+            analytics_date_params = [analytics_dates]
 
         # 1. BROKEN SIZE CURVES & CORE SIZE VELOCITY
         cur.execute("SELECT COUNT(*) FROM products;")
@@ -1139,6 +1152,7 @@ class Database:
                        COALESCE(SUM(revenue_generated), 0) as gmv,
                        COALESCE(AVG(ros), 0) as avg_ros
                 FROM daily_sales_analytics
+                """ + analytics_date_sql + """
                 GROUP BY product_id
             )
             SELECT 
@@ -1157,7 +1171,7 @@ class Database:
             LEFT JOIN sales_totals st ON st.product_id = p.product_id
             GROUP BY discount_bracket
             ORDER BY avg_ros DESC, sku_count DESC;
-        """)
+        """, analytics_date_params)
         elasticity_tiers = [
             {
                 "bracket": r[0],
@@ -1170,71 +1184,45 @@ class Database:
             for r in cur.fetchall()
         ]
 
-        cur.execute("SELECT MAX(analytics_date) FROM daily_sales_analytics;")
-        latest_date_row = cur.fetchone()
-        latest_date = latest_date_row[0] if latest_date_row else None
-
-        # Inelastic Premium Winners
-        cur.execute("""
-            SELECT p.product_id, p.title, p.brand, p.category, p.selling_price, p.discount_percentage,
-                   ts.units_sold, ts.ros, p.product_url
-            FROM (
-                SELECT product_id, units_sold, ros
-                FROM daily_sales_analytics
-                WHERE analytics_date = ?
-                ORDER BY units_sold DESC
-                LIMIT 50
-            ) ts
-            JOIN products p ON p.product_id = ts.product_id
-            WHERE p.discount_percentage <= 35
-            LIMIT 6;
-        """, (latest_date,))
-        inelastic_winners = [
-            {
-                "product_id": r[0],
-                "title": r[1],
-                "brand": r[2],
-                "category": r[3],
-                "selling_price": r[4],
-                "discount": r[5],
-                "units_sold": r[6],
-                "ros": round(r[7] or 0.0, 1),
-                "url": r[8],
-                "insight": "High Pricing Power: Strong volume at near-full retail margin."
-            }
-            for r in cur.fetchall()
-        ]
-
-        # Elastic Volume Drivers
-        cur.execute("""
-            SELECT p.product_id, p.title, p.brand, p.category, p.selling_price, p.discount_percentage,
-                   ts.units_sold, ts.ros, p.product_url
-            FROM (
-                SELECT product_id, units_sold, ros
-                FROM daily_sales_analytics
-                WHERE analytics_date = ?
-                ORDER BY units_sold DESC
-                LIMIT 50
-            ) ts
-            JOIN products p ON p.product_id = ts.product_id
-            WHERE p.discount_percentage >= 50
-            LIMIT 6;
-        """, (latest_date,))
-        elastic_drivers = [
-            {
-                "product_id": r[0],
-                "title": r[1],
-                "brand": r[2],
-                "category": r[3],
-                "selling_price": r[4],
-                "discount": r[5],
-                "units_sold": r[6],
-                "ros": round(r[7] or 0.0, 1),
-                "url": r[8],
-                "insight": "Discount-Driven Off-Take: High price elasticity deal winner."
-            }
-            for r in cur.fetchall()
-        ]
+        inelastic_winners = []
+        elastic_drivers = []
+        if latest_date:
+            cur.execute("""
+                SELECT p.product_id, p.title, p.brand, p.category, p.selling_price, p.discount_percentage,
+                       ts.units_sold, ts.ros, p.product_url
+                FROM (
+                    SELECT product_id, units_sold, ros
+                    FROM daily_sales_analytics
+                    WHERE analytics_date = ?
+                    ORDER BY units_sold DESC
+                    LIMIT 50
+                ) ts
+                JOIN products p ON p.product_id = ts.product_id
+                ORDER BY ts.units_sold DESC, ts.ros DESC, p.product_id DESC;
+            """, (latest_date,))
+            top_sales_rows = cur.fetchall()
+            for r in top_sales_rows:
+                row_payload = {
+                    "product_id": r[0],
+                    "title": r[1],
+                    "brand": r[2],
+                    "category": r[3],
+                    "selling_price": r[4],
+                    "discount": r[5],
+                    "units_sold": r[6],
+                    "ros": round(r[7] or 0.0, 1),
+                    "url": r[8]
+                }
+                if r[5] is not None and r[5] <= 35 and len(inelastic_winners) < 6:
+                    winner = dict(row_payload)
+                    winner["insight"] = "High Pricing Power: Strong volume at near-full retail margin."
+                    inelastic_winners.append(winner)
+                if r[5] is not None and r[5] >= 50 and len(elastic_drivers) < 6:
+                    driver = dict(row_payload)
+                    driver["insight"] = "Discount-Driven Off-Take: High price elasticity deal winner."
+                    elastic_drivers.append(driver)
+                if len(inelastic_winners) >= 6 and len(elastic_drivers) >= 6:
+                    break
 
         # 3. NEW LAUNCH RADAR (First 7-14 Days)
         cur.execute("""
@@ -1251,6 +1239,7 @@ class Database:
                    tn.product_url
             FROM top_new tn
             LEFT JOIN daily_sales_analytics d ON d.product_id = tn.product_id
+            """ + ("AND d.analytics_date = ANY(?)" if analytics_dates else "") + """
             GROUP BY
                 tn.product_id,
                 tn.title,
@@ -1260,7 +1249,7 @@ class Database:
                 tn.discount_percentage,
                 tn.created_at,
                 tn.product_url;
-        """)
+        """, analytics_date_params if analytics_dates else [])
         new_launches = []
         for r in cur.fetchall():
             ros_val = round(r[7] or 0.0, 1)
@@ -1295,6 +1284,7 @@ class Database:
                    rp.product_url
             FROM risk_p rp
             LEFT JOIN daily_sales_analytics d ON d.product_id = rp.product_id
+            """ + ("AND d.analytics_date = ANY(?)" if analytics_dates else "") + """
             GROUP BY
                 rp.product_id,
                 rp.title,
@@ -1307,7 +1297,7 @@ class Database:
                 rp.fit,
                 rp.fabric,
                 rp.product_url;
-        """)
+        """, analytics_date_params if analytics_dates else [])
         return_risk_skus = []
         for r in cur.fetchall():
             rating = r[5]
@@ -1533,12 +1523,67 @@ class Database:
         """
         conn = self._get_connection()
         cur = conn.cursor()
+        cur.execute("""
+            SELECT DISTINCT analytics_date
+            FROM daily_sales_analytics
+            ORDER BY analytics_date DESC
+            LIMIT 30;
+        """)
+        analytics_dates = [row[0] for row in cur.fetchall() if row and row[0]]
+        leaderboard_limit = 25
 
         cur.execute("SELECT COUNT(*) FROM brands;")
         total_discovered = cur.fetchone()[0] or 0
 
         cur.execute("SELECT COUNT(DISTINCT brand) FROM products;")
         active_tracked = cur.fetchone()[0] or 0
+
+        if brand_name:
+            cur.execute("""
+                SELECT category, COUNT(*), AVG(selling_price), AVG(discount_percentage)
+                FROM products
+                WHERE brand = ?
+                GROUP BY category;
+            """, (brand_name,))
+            cat_split = [{"category": r[0], "skus": r[1], "asp": round(r[2], 1), "discount": round(r[3], 1)} for r in cur.fetchall()]
+
+            cur.execute("""
+                SELECT product_id, title, category, selling_price, discount_percentage, average_rating, product_url
+                FROM products
+                WHERE brand = ?
+                ORDER BY discount_percentage DESC
+                LIMIT 5;
+            """, (brand_name,))
+            top_skus = [
+                {"product_id": r[0], "title": r[1], "category": r[2], "price": r[3], "discount": r[4], "rating": r[5], "url": r[6]}
+                for r in cur.fetchall()
+            ]
+
+            return {
+                "kpis": {
+                    "total_discovered_brands": total_discovered,
+                    "active_catalog_brands": active_tracked,
+                    "in_house_brands_count": 0,
+                    "external_brands_count": 0,
+                    "top_gmv_brand": brand_name,
+                    "category_avg_asp": 0.0,
+                    "category_avg_discount": 0.0
+                },
+                "benchmark": {
+                    "myntra_in_house": {"skus": 0, "brands": 0, "asp": 0.0, "discount": 0.0, "rating": 0.0},
+                    "external_brands": {"skus": 0, "brands": 0, "asp": 0.0, "discount": 0.0, "rating": 0.0}
+                },
+                "category_benchmark": {
+                    "asp": 0.0,
+                    "discount": 0.0
+                },
+                "leaderboard": [],
+                "brand_profile": {
+                    "brand": brand_name,
+                    "category_split": cat_split,
+                    "top_skus": top_skus
+                }
+            }
 
         # Exact category baseline ASP and Discount across all active products
         cur.execute("SELECT AVG(selling_price), AVG(discount_percentage) FROM products WHERE selling_price > 0;")
@@ -1572,91 +1617,76 @@ class Database:
                 "rating": round(r[5] or 0.0, 1)
             }
 
-        cur.execute("""
-            SELECT 
-                p.brand,
-                p.is_myntra_label,
-                p.brand_type,
-                COUNT(DISTINCT p.product_id) as skus,
-                COALESCE(SUM(s.inventory_count), 0) as total_stock,
-                AVG(p.selling_price) as asp,
-                AVG(p.discount_percentage) as avg_disc,
-                AVG(p.average_rating) as avg_rating,
-                COALESCE(SUM(d.units_sold), 0) as units_sold,
-                COALESCE(SUM(d.revenue_generated), 0) as total_gmv,
-                COALESCE(AVG(d.ros), 0) as avg_ros
-            FROM products p
-            LEFT JOIN product_sizes s ON p.product_id = s.product_id
-            LEFT JOIN daily_sales_analytics d ON d.product_id = p.product_id
-            GROUP BY p.brand
-            ORDER BY total_gmv DESC, skus DESC;
-        """)
         brand_leaderboard = []
-        for r in cur.fetchall():
-            b_asp = round(r[5] or 0.0, 1)
-            b_disc = round(r[6] or 0.0, 1)
+        if not brand_name:
+            cur.execute("""
+                WITH top_sales_brands AS (
+                    SELECT
+                        brand,
+                        COALESCE(SUM(units_sold), 0) as units_sold,
+                        COALESCE(SUM(revenue_generated), 0) as total_gmv,
+                        COALESCE(AVG(ros), 0) as avg_ros
+                    FROM daily_sales_analytics
+                    """ + ("WHERE analytics_date = ANY(?)" if analytics_dates else "") + """
+                    GROUP BY brand
+                    HAVING brand IS NOT NULL AND brand != ''
+                    ORDER BY total_gmv DESC, units_sold DESC, brand ASC
+                    LIMIT ?
+                )
+                SELECT
+                    p.brand,
+                    MAX(p.is_myntra_label) as is_myntra_label,
+                    MAX(p.brand_type) as brand_type,
+                    COUNT(*) as skus,
+                    AVG(p.selling_price) as asp,
+                    AVG(p.discount_percentage) as avg_disc,
+                    AVG(p.average_rating) as avg_rating,
+                    COALESCE(MAX(tsb.units_sold), 0) as units_sold,
+                    COALESCE(MAX(tsb.total_gmv), 0) as total_gmv,
+                    COALESCE(MAX(tsb.avg_ros), 0) as avg_ros
+                FROM products p
+                JOIN top_sales_brands tsb ON tsb.brand = p.brand
+                GROUP BY p.brand
+                ORDER BY total_gmv DESC, skus DESC
+                LIMIT ?;
+            """, ([analytics_dates, leaderboard_limit] if analytics_dates else [leaderboard_limit]) + [leaderboard_limit])
+            for r in cur.fetchall():
+                b_asp = round(r[4] or 0.0, 1)
+                b_disc = round(r[5] or 0.0, 1)
 
-            # Econometric Relative Pricing Power Index (RPPI)
-            price_ratio = (b_asp / max(1.0, cat_avg_price)) if cat_avg_price > 0 else 1.0
-            margin_ratio = max(0.01, (100.0 - b_disc)) / max(0.01, (100.0 - cat_avg_disc))
-            pricing_power = round(price_ratio * margin_ratio, 2)
+                price_ratio = (b_asp / max(1.0, cat_avg_price)) if cat_avg_price > 0 else 1.0
+                margin_ratio = max(0.01, (100.0 - b_disc)) / max(0.01, (100.0 - cat_avg_disc))
+                pricing_power = round(price_ratio * margin_ratio, 2)
 
-            if pricing_power >= 1.15:
-                classification = "Strong Pricing Power (High Margin / Premium)"
-                badge_class = "high"
-            elif pricing_power >= 0.85:
-                classification = "Moderate Pricing Power (Category Parity)"
-                badge_class = "moderate"
-            else:
-                classification = "Discount-Driven / Elastic (Markdown Dependent)"
-                badge_class = "low"
+                if pricing_power >= 1.15:
+                    classification = "Strong Pricing Power (High Margin / Premium)"
+                    badge_class = "high"
+                elif pricing_power >= 0.85:
+                    classification = "Moderate Pricing Power (Category Parity)"
+                    badge_class = "moderate"
+                else:
+                    classification = "Discount-Driven / Elastic (Markdown Dependent)"
+                    badge_class = "low"
 
-            brand_leaderboard.append({
-                "brand": r[0],
-                "is_myntra": bool(r[1]),
-                "brand_type": r[2] or ("Myntra In-House Label" if r[1] else "External Brand"),
-                "skus": r[3],
-                "total_stock": int(r[4]),
-                "asp": b_asp,
-                "category_asp": cat_avg_price,
-                "category_discount": cat_avg_disc,
-                "avg_discount": b_disc,
-                "avg_rating": round(r[7] or 0.0, 1),
-                "units_sold": int(r[8]),
-                "total_gmv": round(r[9], 2),
-                "avg_ros": round(r[10], 1),
-                "pricing_power_index": pricing_power,
-                "classification": classification,
-                "badge_class": badge_class
-            })
+                brand_leaderboard.append({
+                    "brand": r[0],
+                    "is_myntra": bool(r[1]),
+                    "brand_type": r[2] or ("Myntra In-House Label" if r[1] else "External Brand"),
+                    "skus": r[3],
+                    "asp": b_asp,
+                    "category_asp": cat_avg_price,
+                    "category_discount": cat_avg_disc,
+                    "avg_discount": b_disc,
+                    "avg_rating": round(r[6] or 0.0, 1),
+                    "units_sold": int(r[7] or 0),
+                    "total_gmv": round(r[8], 2),
+                    "avg_ros": round(r[9], 1),
+                    "pricing_power_index": pricing_power,
+                    "classification": classification,
+                    "badge_class": badge_class
+                })
 
         brand_profile = None
-        if brand_name:
-            cur.execute("""
-                SELECT category, COUNT(*), AVG(selling_price), AVG(discount_percentage)
-                FROM products
-                WHERE LOWER(brand) = LOWER(?)
-                GROUP BY category;
-            """, (brand_name,))
-            cat_split = [{"category": r[0], "skus": r[1], "asp": round(r[2], 1), "discount": round(r[3], 1)} for r in cur.fetchall()]
-
-            cur.execute("""
-                SELECT product_id, title, category, selling_price, discount_percentage, average_rating, product_url
-                FROM products
-                WHERE LOWER(brand) = LOWER(?)
-                ORDER BY discount_percentage DESC
-                LIMIT 5;
-            """, (brand_name,))
-            top_skus = [
-                {"product_id": r[0], "title": r[1], "category": r[2], "price": r[3], "discount": r[4], "rating": r[5], "url": r[6]}
-                for r in cur.fetchall()
-            ]
-
-            brand_profile = {
-                "brand": brand_name,
-                "category_split": cat_split,
-                "top_skus": top_skus
-            }
 
         return {
             "kpis": {
