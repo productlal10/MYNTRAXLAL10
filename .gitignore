@@ -5,10 +5,7 @@ __pycache__/
 venv/
 .pytest_cache/
 .mypy_cache/
-*.sql
-*.sqlite
 logs/
-data/
 data/*.duckdb
 data/*.duckdb.wal
 *.db
