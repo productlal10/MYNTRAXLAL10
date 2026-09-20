@@ -10,38 +10,66 @@ concurrency:
   group: production-deploy
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      EC2_HOST: ${{ secrets.EC2_HOST }}
+      EC2_USER: ${{ secrets.EC2_USER }}
+      EC2_APP_DIR: ${{ secrets.EC2_APP_DIR }}
+      EC2_APP_USER: ${{ secrets.EC2_APP_USER }}
+      EC2_APP_PORT: ${{ secrets.EC2_APP_PORT }}
+      EC2_ENV_FILE: ${{ secrets.EC2_ENV_FILE }}
+      EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
+      - name: Validate deploy secrets
+        shell: bash
+        run: |
+          missing=()
+          for key in EC2_HOST EC2_USER EC2_APP_DIR EC2_APP_USER EC2_APP_PORT EC2_ENV_FILE EC2_SSH_PRIVATE_KEY; do
+            if [ -z "${!key:-}" ]; then
+              missing+=("$key")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "Missing required GitHub Actions secrets: ${missing[*]}" >&2
+            echo "Configure them in: Settings -> Secrets and variables -> Actions" >&2
+            exit 1
+          fi
+
       - name: Verify Python syntax
-        run: python -m compileall server.py database.py duckdb_analytics.py build_duckdb.py
+        shell: bash
+        run: |
+          python -m compileall server.py database.py duckdb_analytics.py build_duckdb.py
 
       - name: Start SSH agent
-        uses: webfactory/ssh-agent@v0.9.0
+        uses: webfactory/ssh-agent@v0.10.0
         with:
-          ssh-private-key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          ssh-private-key: ${{ env.EC2_SSH_PRIVATE_KEY }}
 
       - name: Trust EC2 host key
+        shell: bash
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
+          ssh-keyscan -H "${EC2_HOST}" >> ~/.ssh/known_hosts
 
       - name: Sync code to EC2
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
-          EC2_APP_DIR: ${{ secrets.EC2_APP_DIR }}
+        shell: bash
         run: |
+          ssh "${EC2_USER}@${EC2_HOST}" "mkdir -p '${EC2_APP_DIR}'"
           rsync -az --delete \
             --exclude ".git" \
             --exclude ".github" \
@@ -58,22 +86,13 @@ jobs:
             ./ "${EC2_USER}@${EC2_HOST}:${EC2_APP_DIR}/"
 
       - name: Write remote env file
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
-          EC2_APP_DIR: ${{ secrets.EC2_APP_DIR }}
-          EC2_ENV_FILE: ${{ secrets.EC2_ENV_FILE }}
+        shell: bash
         run: |
           ssh "${EC2_USER}@${EC2_HOST}" "mkdir -p '${EC2_APP_DIR}'"
           printf '%s' "${EC2_ENV_FILE}" | ssh "${EC2_USER}@${EC2_HOST}" "cat > '${EC2_APP_DIR}/.env'"
 
       - name: Run remote deploy
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
-          EC2_APP_DIR: ${{ secrets.EC2_APP_DIR }}
-          EC2_APP_USER: ${{ secrets.EC2_APP_USER }}
-          EC2_APP_PORT: ${{ secrets.EC2_APP_PORT }}
+        shell: bash
         run: |
           ssh "${EC2_USER}@${EC2_HOST}" "\
             cd '${EC2_APP_DIR}' && \
@@ -85,10 +104,7 @@ jobs:
             bash scripts/deploy_remote.sh"
 
       - name: Show remote deploy status
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
-          EC2_APP_DIR: ${{ secrets.EC2_APP_DIR }}
+        shell: bash
         run: |
           ssh "${EC2_USER}@${EC2_HOST}" "\
             cat '${EC2_APP_DIR}/tmp/analytics_rebuild_status.json' 2>/dev/null || true; \
