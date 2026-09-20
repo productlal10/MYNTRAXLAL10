@@ -119,6 +119,65 @@ def _safe_float(value, default: float = 0.0) -> float:
         return default
 
 
+INVALID_COLOR_TOKENS = {
+    r"\n",
+    "unknown",
+    "na",
+    "n/a",
+    "null",
+    "none",
+    "nil",
+    "-",
+    "--",
+}
+
+COLOR_HEX_LOOKUP = {
+    "white": "#ffffff",
+    "black": "#0f172a",
+    "blue": "#2563eb",
+    "navy": "#1e3a8a",
+    "grey": "#64748b",
+    "gray": "#64748b",
+    "olive": "#556b2f",
+    "red": "#dc2626",
+    "green": "#16a34a",
+    "yellow": "#eab308",
+    "pink": "#ec4899",
+    "brown": "#78350f",
+    "beige": "#f5f5dc",
+    "cream": "#f5f5dc",
+    "multicolor": "#94a3b8",
+}
+
+
+def _normalize_color_name(value, fallback: str | None = None) -> str | None:
+    token = re.sub(r"\s+", " ", str(value or "").strip())
+    if not token:
+        return fallback
+    lowered = token.lower()
+    if lowered in INVALID_COLOR_TOKENS:
+        return fallback
+    if lowered in {"multi color", "multi-color"}:
+        return "Multicolor"
+    return " ".join(part.capitalize() for part in token.split(" "))
+
+
+def _normalize_color_hex(value, color_name: str | None = None, fallback: str = "#94a3b8") -> str:
+    token = str(value or "").strip()
+    if re.fullmatch(r"#[0-9a-fA-F]{6}", token):
+        return token.lower()
+    normalized_name = (_normalize_color_name(color_name, fallback="") or "").strip().lower()
+    return COLOR_HEX_LOOKUP.get(normalized_name, fallback)
+
+
+def _valid_color_sql(column_expr: str = "p.primary_color") -> str:
+    invalid_tokens_sql = ", ".join("'" + token.replace("'", "''") + "'" for token in sorted(INVALID_COLOR_TOKENS))
+    return (
+        f"{column_expr} IS NOT NULL AND TRIM({column_expr}) != '' "
+        f"AND LOWER(TRIM({column_expr})) NOT IN ({invalid_tokens_sql})"
+    )
+
+
 def _load_primary_image(full_data_json) -> str:
     if not full_data_json:
         return ""
@@ -1428,6 +1487,8 @@ def get_insights():
             fab_counts[s_fab] += 1
             if sp: fab_prices[s_fab].append(sp)
             if disc: fab_discs[s_fab].append(disc)
+        s_col = _normalize_color_name(s_col, fallback=None)
+        s_chex = _normalize_color_hex(s_chex, s_col) if s_col else None
         if s_col:
             col_counts[s_col] += 1
             if s_chex and s_col not in col_hexes:
@@ -1438,8 +1499,6 @@ def get_insights():
             if sp: brand_prices[s_b].append(sp)
         if sp:
             sample_prices.append(sp)
-        if s_rate and s_rate >= 4.0 and s_rcnt and s_rcnt >= 30:
-            top_rated_candidates.append((s_rcnt, s_rate, (s_pid, s_b, s_title, sp, s_mrp or sp, disc, s_rate, s_rcnt, s_url)))
         if s_instock:
             if max_disc_row is None or disc > (max_disc_row[1] or 0):
                 max_disc_row = (s_b, disc, sp, s_title)
@@ -1456,11 +1515,56 @@ def get_insights():
          round(sum(col_discs[c])/len(col_discs[c]), 1) if col_discs[c] else avg_discount_val)
         for c, cnt in col_counts.most_common(6)
     ]
-    top_rated_candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    cur.execute(f"""
+        SELECT
+            p.product_id,
+            p.brand,
+            p.title,
+            p.selling_price,
+            COALESCE(NULLIF(p.mrp, 0), p.selling_price) AS mrp,
+            COALESCE(p.discount_percentage, 0) AS discount_percentage,
+            COALESCE(p.average_rating, 0) AS average_rating,
+            COALESCE(p.total_ratings_count, 0) AS total_ratings_count,
+            p.product_url
+        FROM products p
+        WHERE {where_sql}
+          AND COALESCE(p.is_in_stock, 0) = 1
+          AND COALESCE(p.total_ratings_count, 0) >= 30
+          AND COALESCE(p.average_rating, 0) >= 4.0
+        ORDER BY
+            COALESCE(p.total_ratings_count, 0) DESC,
+            COALESCE(p.average_rating, 0) DESC,
+            COALESCE(p.selling_price, 0) DESC,
+            p.product_id DESC
+        LIMIT 15;
+    """, where_params)
+    top_rated_candidates = [tuple(row) for row in cur.fetchall()]
+    if len(top_rated_candidates) < 3:
+        cur.execute(f"""
+            SELECT
+                p.product_id,
+                p.brand,
+                p.title,
+                p.selling_price,
+                COALESCE(NULLIF(p.mrp, 0), p.selling_price) AS mrp,
+                COALESCE(p.discount_percentage, 0) AS discount_percentage,
+                COALESCE(p.average_rating, 0) AS average_rating,
+                COALESCE(p.total_ratings_count, 0) AS total_ratings_count,
+                p.product_url
+            FROM products p
+            WHERE {where_sql}
+              AND COALESCE(p.is_in_stock, 0) = 1
+            ORDER BY
+                COALESCE(p.total_ratings_count, 0) DESC,
+                COALESCE(p.average_rating, 0) DESC,
+                COALESCE(p.selling_price, 0) DESC,
+                p.product_id DESC
+            LIMIT 15;
+        """, where_params)
+        top_rated_candidates = [tuple(row) for row in cur.fetchall()]
     p3_rows = []
     seen_top3_keys = set()
-    for cand in top_rated_candidates:
-        row = cand[2]
+    for row in top_rated_candidates:
         dedupe_key = (
             str(row[1] or "").strip().lower(),
             str(row[2] or "").strip().lower()
@@ -1592,7 +1696,13 @@ def get_insights():
 
     # Top Colors — derived from parallel col_rows (no extra query!)
     top_colors = [
-        {"color": r[0], "hex": r[1] or "#0f172a", "count": r[2], "discount": round(r[3] or 0, 1), "percentage": round((r[2] / max(1, total_products)) * 100, 1)}
+        {
+            "color": _normalize_color_name(r[0], fallback="Multicolor"),
+            "hex": _normalize_color_hex(r[1], r[0], fallback="#0f172a"),
+            "count": r[2],
+            "discount": round(r[3] or 0, 1),
+            "percentage": round((r[2] / max(1, total_products)) * 100, 1)
+        }
         for r in col_rows
     ]
 
@@ -2037,6 +2147,8 @@ def get_products():
         title_value = r["title"] or ""
         product_url = r["product_url"] or ""
         updated_at = r["updated_at"]
+        primary_color = _normalize_color_name(r["primary_color"], fallback="Multicolor")
+        color_hex = _normalize_color_hex(r["color_hex"], primary_color, fallback="")
         data = {
             "product_info": {
                 "product_id": pid,
@@ -2046,8 +2158,8 @@ def get_products():
                 "category": r["category"] or "",
                 "sub_category": r["sub_category"] or "",
                 "product_url": product_url,
-                "primary_color": r["primary_color"] or "",
-                "color_hex": r["color_hex"] or ""
+                "primary_color": primary_color,
+                "color_hex": color_hex
             },
             "pricing": {
                 "mrp": _safe_float(r["mrp"]),
@@ -2072,7 +2184,7 @@ def get_products():
                 "primary_image": media_primary,
                 "image_gallery": [media_primary] if media_primary else []
             },
-            "color_hex": r["color_hex"] or "",
+            "color_hex": color_hex,
             "last_seen_at": updated_at,
             "updated_at": updated_at
         }
@@ -2179,9 +2291,10 @@ def get_single_product(product_id):
         data["ratings_and_reviews"]["total_ratings_count"] = int(row[2] or 0)
         data["ratings_and_reviews"]["total_reviews_count"] = int(row[3] or 0)
         data["ratings"] = data["ratings_and_reviews"]
-        if "product_info" in data and row[4]:
-            data["product_info"]["primary_color"] = row[4]
-            data["product_info"]["color_hex"] = row[5] or "#06b6d4"
+        if "product_info" in data:
+            normalized_color = _normalize_color_name(row[4], fallback="Multicolor")
+            data["product_info"]["primary_color"] = normalized_color
+            data["product_info"]["color_hex"] = _normalize_color_hex(row[5], normalized_color, fallback="#06b6d4")
 
         # Attach real size-wise inventory table
         cur.execute("""
@@ -3726,13 +3839,17 @@ def _build_catalog_filters(category="shirts", gender="men", price_min=None, pric
             params.extend(sub_params)
 
     if color and color.lower() != "all":
-        c_list = [c.strip().lower() for c in color.split(",") if c.strip()]
+        c_list = [
+            normalized.lower()
+            for normalized in (_normalize_color_name(c, fallback=None) for c in color.split(","))
+            if normalized
+        ]
         if len(c_list) == 1:
-            clauses.append("LOWER(p.primary_color) = ?")
+            clauses.append("LOWER(TRIM(p.primary_color)) = ?")
             params.append(c_list[0])
         elif c_list:
             placeholders = ",".join(["?"] * len(c_list))
-            clauses.append(f"LOWER(p.primary_color) IN ({placeholders})")
+            clauses.append(f"LOWER(TRIM(p.primary_color)) IN ({placeholders})")
             params.extend(c_list)
 
     if fit and fit.lower() != "all":
@@ -4227,7 +4344,7 @@ def _build_scope_sidebar_counts(cur, filters: dict):
     cur.execute(f"""
         SELECT p.primary_color, MAX(p.color_hex) as color_hex, COUNT(*) as cnt
         FROM products p
-        WHERE {color_where_sql} AND p.primary_color IS NOT NULL AND p.primary_color != ''
+        WHERE {color_where_sql} AND {_valid_color_sql("p.primary_color")}
         GROUP BY p.primary_color
         ORDER BY cnt DESC, p.primary_color ASC
         LIMIT 12;
@@ -4284,7 +4401,11 @@ def _build_scope_sidebar_counts(cur, filters: dict):
         "subcategories": subcategories,
         "available_filters": {
             "brands": [{"brand": r["brand"], "count": int(r["cnt"] or 0)} for r in brand_rows],
-            "colors": [{"color": r["primary_color"], "hex": r["color_hex"] or "#0f172a", "count": int(r["cnt"] or 0)} for r in color_rows],
+            "colors": [{
+                "color": _normalize_color_name(r["primary_color"], fallback="Multicolor"),
+                "hex": _normalize_color_hex(r["color_hex"], r["primary_color"], fallback="#0f172a"),
+                "count": int(r["cnt"] or 0)
+            } for r in color_rows],
             "fabrics": [{"fabric": r["clean_f"], "count": int(r["cnt"] or 0)} for r in fabric_rows],
             "fits": [{"fit": r["fit"], "count": int(r["fit_cnt"] or 0)} for r in fit_rows]
         }
@@ -4642,7 +4763,7 @@ def get_category_intelligence():
     cur.execute(f"""
         SELECT p.primary_color, p.color_hex, COUNT(*) as c_cnt
         FROM products p
-        WHERE {where_sql} AND p.primary_color IS NOT NULL AND p.primary_color != ''
+        WHERE {where_sql} AND {_valid_color_sql("p.primary_color")}
         GROUP BY p.primary_color, p.color_hex
         ORDER BY c_cnt DESC
         LIMIT 8;
@@ -4651,8 +4772,8 @@ def get_category_intelligence():
     c_total = sum(int(r["c_cnt"] or 0) for r in c_rows) or 1
     top_colors = [
         {
-            "color": r["primary_color"],
-            "hex": r["color_hex"] or "#0f172a",
+            "color": _normalize_color_name(r["primary_color"], fallback="Multicolor"),
+            "hex": _normalize_color_hex(r["color_hex"], r["primary_color"], fallback="#0f172a"),
             "products": int(r["c_cnt"] or 0),
             "share": f"{round((int(r['c_cnt'] or 0) / max(1, total_prods) * 100.0), 1)}%"
         }
@@ -4934,7 +5055,7 @@ def get_fabric_intelligence():
         FROM products p
         WHERE {where_sql} 
           AND LOWER({fabric_bucket_sql}) = ?
-          AND p.primary_color IS NOT NULL AND p.primary_color != ''
+          AND {_valid_color_sql("p.primary_color")}
         GROUP BY p.primary_color, p.color_hex
         ORDER BY c_cnt DESC
         LIMIT 5;
@@ -4946,8 +5067,8 @@ def get_fabric_intelligence():
         for r in cf_rows:
             cnt = int(r["c_cnt"] or 0)
             top_colors_fabric.append({
-                "color": r["primary_color"],
-                "hex": r["color_hex"] or "#0f172a",
+                "color": _normalize_color_name(r["primary_color"], fallback="Multicolor"),
+                "hex": _normalize_color_hex(r["color_hex"], r["primary_color"], fallback="#0f172a"),
                 "count": cnt,
                 "share": f"{round(cnt/max(1, cf_tot)*100, 1)}%"
             })
@@ -5370,13 +5491,18 @@ def get_brands_intelligence():
     cur.execute(f"""
         SELECT p.primary_color, p.color_hex, COUNT(*) as cnt
         FROM products p
-        WHERE {active_where_sql} AND p.primary_color IS NOT NULL AND p.primary_color != ''
+        WHERE {active_where_sql} AND {_valid_color_sql("p.primary_color")}
         GROUP BY p.primary_color, p.color_hex
         ORDER BY cnt DESC
         LIMIT 7;
     """, active_params)
     c_rows = cur.fetchall()
-    top_colors = [{"color": r["primary_color"], "hex": r["color_hex"] or "#0f172a", "count": int(r["cnt"]), "share": f"{round(int(r['cnt']) / max(1, total_prods) * 100, 1)}%"} for r in c_rows]
+    top_colors = [{
+        "color": _normalize_color_name(r["primary_color"], fallback="Multicolor"),
+        "hex": _normalize_color_hex(r["color_hex"], r["primary_color"], fallback="#0f172a"),
+        "count": int(r["cnt"]),
+        "share": f"{round(int(r['cnt']) / max(1, total_prods) * 100, 1)}%"
+    } for r in c_rows]
 
     # 5. Top Fits (Dynamic)
     cur.execute(f"""
@@ -5937,7 +6063,7 @@ def get_price_intelligence():
                 p.selling_price,
                 NULLIF(p.color_hex, '') AS color_hex
             FROM products p
-            WHERE {where_sql} AND p.primary_color IS NOT NULL AND p.primary_color != ''
+            WHERE {where_sql} AND {_valid_color_sql("p.primary_color")}
         ),
         ranked_colors AS (
             SELECT
@@ -5961,8 +6087,8 @@ def get_price_intelligence():
     """, params)
     price_by_color = []
     for row in cur.fetchall():
-        color_name = row["primary_color"]
-        derived_hex = (row["color_hex"] or "").strip() or color_hex_lookup.get(str(color_name).strip().lower(), "#94a3b8")
+        color_name = _normalize_color_name(row["primary_color"], fallback="Multicolor")
+        derived_hex = _normalize_color_hex(row["color_hex"], color_name, fallback="#94a3b8")
         price_by_color.append({
             "color": color_name,
             "hex": derived_hex,
@@ -6157,15 +6283,19 @@ def get_price_intelligence():
     cur.execute(f"""
         SELECT p.primary_color, COUNT(*) as cnt
         FROM products p
-        WHERE {color_where_sql} AND p.primary_color IS NOT NULL AND p.primary_color != ''
+        WHERE {color_where_sql} AND {_valid_color_sql("p.primary_color")}
         GROUP BY p.primary_color
         ORDER BY cnt DESC, p.primary_color ASC
         LIMIT 25;
     """, color_params)
     available_colors = [
-        {"value": str(r["primary_color"]).strip().lower(), "name": r["primary_color"], "count": int(r["cnt"] or 0)}
+        {
+            "value": str(_normalize_color_name(r["primary_color"], fallback="Multicolor")).strip().lower(),
+            "name": _normalize_color_name(r["primary_color"], fallback="Multicolor"),
+            "count": int(r["cnt"] or 0)
+        }
         for r in cur.fetchall()
-        if r["primary_color"]
+        if _normalize_color_name(r["primary_color"], fallback=None)
     ]
 
     # 11. Strategic Price Opportunities
@@ -6556,9 +6686,7 @@ def compare_products():
         else:
             pattern_val = "Solid"
 
-        color_name = info.get("primary_color") or spec.get("color") or "Multicolor"
-        if not color_name or color_name.lower() == "null":
-            color_name = "Multicolor"
+        color_name = _normalize_color_name(info.get("primary_color") or spec.get("color"), fallback="Multicolor")
 
         # Color dots
         color_dots_map = {
@@ -6776,7 +6904,7 @@ def get_color_intelligence():
         SELECT 
             COUNT(*) as total_prods,
             COUNT(DISTINCT p.brand) as brands_count,
-            COUNT(DISTINCT p.primary_color) as colors_count
+            COUNT(DISTINCT CASE WHEN {_valid_color_sql("p.primary_color")} THEN LOWER(TRIM(p.primary_color)) END) as colors_count
         FROM products p
         WHERE {where_sql};
     """, params)
@@ -6803,7 +6931,7 @@ def get_color_intelligence():
                     THEN sa.units_sold ELSE 0 END), 0) as prev_units
             FROM products p
             LEFT JOIN daily_sales_analytics sa ON sa.product_id = p.product_id
-            WHERE {where_sql} AND p.primary_color IS NOT NULL AND p.primary_color != ''
+            WHERE {where_sql} AND {_valid_color_sql("p.primary_color")}
             GROUP BY p.primary_color
         )
         SELECT 
@@ -6816,7 +6944,7 @@ def get_color_intelligence():
             COALESCE(cs.prev_units, 0) as prev_units
         FROM products p
         LEFT JOIN color_sales cs ON cs.primary_color = p.primary_color
-        WHERE {where_sql} AND p.primary_color IS NOT NULL AND p.primary_color != ''
+        WHERE {where_sql} AND {_valid_color_sql("p.primary_color")}
         GROUP BY p.primary_color, cs.curr_units, cs.prev_units
         ORDER BY cnt DESC;
     """, params + params)
@@ -6830,8 +6958,8 @@ def get_color_intelligence():
         growth_pct = _pct_change(_safe_float(r["curr_units"]), _safe_float(r["prev_units"]))
         color_dist.append({
             "rank": rank,
-            "color": r["primary_color"],
-            "hex": r["hex_val"],
+            "color": _normalize_color_name(r["primary_color"], fallback="Multicolor"),
+            "hex": _normalize_color_hex(r["hex_val"], r["primary_color"], fallback="#0f172a"),
             "count": cnt,
             "share": f"{share_pct}%",
             "share_pct": share_pct,
@@ -6888,7 +7016,7 @@ def get_color_intelligence():
         cur.execute(f"""
             SELECT p.brand, p.primary_color, COUNT(*) as cnt
             FROM products p
-            WHERE {where_sql} AND p.brand IN ({b_placeholders}) AND p.primary_color IS NOT NULL AND p.primary_color != ''
+            WHERE {where_sql} AND p.brand IN ({b_placeholders}) AND {_valid_color_sql("p.primary_color")}
             GROUP BY p.brand, p.primary_color;
         """, params + top_5_brands)
         hm_rows = cur.fetchall()
@@ -6917,7 +7045,7 @@ def get_color_intelligence():
                 SUM(CASE WHEN LOWER(p.title) LIKE '%festive%' OR LOWER(p.title) LIKE '%party%' OR LOWER(p.fabric) LIKE '%velvet%' THEN 1 ELSE 0 END) as festive_cnt,
                 COUNT(*) as tot
             FROM products p
-            WHERE {where_sql} AND p.primary_color IN ({c_placeholders})
+            WHERE {where_sql} AND {_valid_color_sql("p.primary_color")} AND p.primary_color IN ({c_placeholders})
             GROUP BY p.primary_color;
         """, params + top5_colors)
         seas_map = {r["primary_color"]: r for r in cur.fetchall()}
