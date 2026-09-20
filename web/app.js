@@ -535,6 +535,7 @@ let _insightsLoading = false;
 let _ctoFacetState = { brands: [], subcategories: [] };
 let _dashboardRequestId = 0;
 let _dashboardFetchController = null;
+const MAX_CTO_BRAND_OPTIONS_WITHOUT_SEARCH = 250;
 
 function readCTOFilterState() {
   return {
@@ -609,6 +610,24 @@ async function fetchStatsAndInsights() {
     renderDashboardKPIs(statsRes, {});
     renderBrandTypeDonut(statsRes);
 
+    fetchJson('/api/insights/facets' + buildCTOQueryString(filters, { includeSort: false }), { signal })
+      .then(facetsRes => {
+        if (requestId !== _dashboardRequestId) return;
+        renderCTOBrandScaleMeta(facetsRes);
+        if (Array.isArray(facetsRes.available_subcategories)) {
+          renderSubcategoriesDropdown(facetsRes);
+        }
+        if (Array.isArray(facetsRes.available_brands)) {
+          renderBrandsDropdown(facetsRes);
+        }
+        renderCTOFilterHints(facetsRes);
+      })
+      .catch(err => {
+        if (requestId !== _dashboardRequestId) return;
+        if (err?.name === 'AbortError') return;
+        console.warn('Facet load error (non-fatal):', err);
+      });
+
     // PHASE 2: Fetch insights in background
     _insightsLoading = true;
     fetchJson('/api/insights' + qs, { signal })
@@ -631,13 +650,6 @@ async function fetchStatsAndInsights() {
         renderCTOBrandScaleMeta(insightsRes);
         renderBrandScaleDistribution(insightsRes);
         renderBrandValuationMatrix(insightsRes);
-        if (Array.isArray(insightsRes.available_subcategories)) {
-          renderSubcategoriesDropdown(insightsRes);
-        }
-        if (Array.isArray(insightsRes.available_brands)) {
-          renderBrandsDropdown(insightsRes);
-        }
-        renderCTOFilterHints(insightsRes);
       })
       .catch(err => {
         if (requestId !== _dashboardRequestId) return;
@@ -839,7 +851,7 @@ function applyCTOBrandOptions(selectedValue = 'all') {
   const allBrands = _ctoFacetState.brands || [];
   let visibleBrands = searchTerm
     ? allBrands.filter(b => b.value.toLowerCase().includes(searchTerm))
-    : allBrands.slice();
+    : allBrands.slice(0, MAX_CTO_BRAND_OPTIONS_WITHOUT_SEARCH);
 
   const selectedBrand = selectedValue && selectedValue !== 'all'
     ? allBrands.find(b => b.value.toLowerCase() === String(selectedValue).toLowerCase())
@@ -853,6 +865,10 @@ function applyCTOBrandOptions(selectedValue = 'all') {
     const isSel = b.value.toLowerCase() === String(selectedValue || 'all').toLowerCase() ? 'selected' : '';
     html += `<option value="${escapeHtml(b.value)}" ${isSel}>${escapeHtml(b.value)} (${b.count.toLocaleString()})</option>`;
   });
+
+  if (!searchTerm && allBrands.length > visibleBrands.length) {
+    html += `<option value="" disabled>Showing first ${visibleBrands.length.toLocaleString()} brands. Type to search ${allBrands.length.toLocaleString()} total brands.</option>`;
+  }
 
   if (visibleBrands.length === 0) {
     html += '<option value="" disabled>No brands match this search</option>';

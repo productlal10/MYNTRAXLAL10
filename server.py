@@ -1851,25 +1851,15 @@ def get_insights():
         "small_brands": {"count": small_cnt, "products": small_prods, "share": round((small_prods / total_scale_prods) * 100, 1)}
     }
 
-    facets_payload = _get_cached_cto_facets(cur, filters)
-    available_subcategories = facets_payload["available_subcategories"]
-    available_brands = facets_payload["available_brands"]
-
     # Brand Valuation & Revenue Matrix — from parallel brand_matrix_rows (no extra query!)
     matrix_rows = brand_matrix_rows
-    matrix_brand_inventory_units, _, _ = _get_brand_inventory_breakdown(
-        cur,
-        where_sql,
-        where_params,
-        [row[0] for row in matrix_rows]
-    )
     brand_valuation_matrix = []
     for r in matrix_rows:
         b_name = r[0]
         b_skus = int(r[1] or 0)
         b_mean_price = float(r[2] or 0.0)
         b_mean_mrp = float(r[3] or 0.0)
-        b_total_units = matrix_brand_inventory_units.get(b_name, int(total_warehouse_units * (b_skus / max(1, total_products))))
+        b_total_units = int(total_warehouse_units * (b_skus / max(1, total_products)))
         b_sales_units = 0
         b_revenue = round(b_skus * b_mean_price, 2)
         b_valuation = round(b_total_units * b_mean_price, 2)
@@ -1919,10 +1909,14 @@ def get_insights():
             "p75_price": cto_p75_price
         },
         "brand_scale_breakdown": brand_scale_breakdown,
-        "brand_scale_meta": facets_payload["brand_scale_meta"],
-        "available_subcategories": available_subcategories,
-        "available_brands": available_brands,
-        "cto_filter_meta": facets_payload["cto_filter_meta"],
+        "brand_scale_meta": {
+            "largest_min": LARGE_BRAND_MIN_PRODUCTS,
+            "mid_min": MID_BRAND_MIN_PRODUCTS,
+            "mid_max": LARGE_BRAND_MIN_PRODUCTS - 1,
+            "largest_label": f"Largest Brands (>={LARGE_BRAND_MIN_PRODUCTS:,} SKUs)",
+            "mid_label": f"Mid-Tier Brands ({MID_BRAND_MIN_PRODUCTS:,}-{LARGE_BRAND_MIN_PRODUCTS - 1:,} SKUs)",
+            "small_label": f"Small / Emerging (<{MID_BRAND_MIN_PRODUCTS:,} SKUs)"
+        },
         "brand_valuation_matrix": brand_valuation_matrix,
         "total_products": total_products,
         "in_stock_products": in_stock_products,
