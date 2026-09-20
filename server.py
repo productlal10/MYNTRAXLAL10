@@ -121,6 +121,7 @@ def _safe_float(value, default: float = 0.0) -> float:
 
 INVALID_COLOR_TOKENS = {
     r"\n",
+    r"\\n",
     "unknown",
     "na",
     "n/a",
@@ -155,7 +156,7 @@ def _normalize_color_name(value, fallback: str | None = None) -> str | None:
     if not token:
         return fallback
     lowered = token.lower()
-    if lowered in INVALID_COLOR_TOKENS:
+    if lowered in INVALID_COLOR_TOKENS or lowered.replace("\\", "") == "n":
         return fallback
     if lowered in {"multi color", "multi-color"}:
         return "Multicolor"
@@ -172,9 +173,12 @@ def _normalize_color_hex(value, color_name: str | None = None, fallback: str = "
 
 def _valid_color_sql(column_expr: str = "p.primary_color") -> str:
     invalid_tokens_sql = ", ".join("'" + token.replace("'", "''") + "'" for token in sorted(INVALID_COLOR_TOKENS))
+    lowered_expr = f"LOWER(TRIM({column_expr}))"
+    slashless_expr = f"REPLACE({lowered_expr}, '\\\\', '')"
     return (
         f"{column_expr} IS NOT NULL AND TRIM({column_expr}) != '' "
-        f"AND LOWER(TRIM({column_expr})) NOT IN ({invalid_tokens_sql})"
+        f"AND {lowered_expr} NOT IN ({invalid_tokens_sql}) "
+        f"AND {slashless_expr} != 'n'"
     )
 
 
