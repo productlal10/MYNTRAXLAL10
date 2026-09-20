@@ -278,7 +278,9 @@ class Database:
         self.db_path = db_path
         self._local = threading.local()
         self._write_lock = threading.Lock()
-        self.init_db()
+        skip_db_init = str(os.getenv("SKIP_DB_INIT", "")).strip().lower() in {"1", "true", "yes", "on"}
+        if not skip_db_init:
+            self.init_db()
 
     def _get_connection(self):
         """Returns a thread-local PostgreSQL connection."""
