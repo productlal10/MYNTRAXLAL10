@@ -63,6 +63,7 @@ VALID_EMAILS = _load_valid_emails()
 
 # Valid active tokens store (in-memory token registry)
 ACTIVE_SESSIONS = set()
+PREWARM_STARTED = False
 
 import threading
 from typing import Any
@@ -7327,6 +7328,7 @@ def start_cache_prewarming():
         warmers = [
             ('/api/stats', get_stats),
             ('/api/insights', get_insights),
+            ('/api/insights/facets', get_insights_facets),
             ('/api/insights?category=shirts&gender=men', get_insights),
             ('/api/brands/facets', get_brand_facets),
             ('/api/analytics/daily-sales-ros', get_daily_sales_ros_analytics),
@@ -7355,13 +7357,23 @@ def start_cache_prewarming():
 
     threading.Thread(target=_worker, daemon=True).start()
 
+
+def maybe_start_cache_prewarming():
+    global PREWARM_STARTED
+    if PREWARM_STARTED:
+        return
+    if os.environ.get("SKIP_PREWARM", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return
+    PREWARM_STARTED = True
+    start_cache_prewarming()
+
 # Pre-warming function available for standalone server boot
+maybe_start_cache_prewarming()
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5050))
     print(f"\n=======================================================")
     print(f"🚀 Myntra Dashboard & Scraper UI running on:")
     print(f"👉 http://localhost:{port}")
     print(f"=======================================================\n")
-    if os.environ.get("SKIP_PREWARM", "").strip().lower() not in {"1", "true", "yes", "on"}:
-        start_cache_prewarming()
     app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
