@@ -173,3 +173,50 @@ python3 main.py --export-only
 # MYNTRAXLAL10
 # MYNTRAXLAL10
 # MYNTRAXLAL10
+
+---
+
+## Deployment
+
+The recommended production deploy path is now GitHub Actions plus an idempotent
+remote deploy script.
+
+### What changed
+
+- App deploy no longer waits for a full DuckDB rebuild before the site comes up.
+- DuckDB rebuild now uses DuckDB's native PostgreSQL extension instead of
+  row-by-row inserts.
+- Analytics rebuild is atomic: the current analytics DB stays live until the new
+  one is fully built.
+- After analytics rebuild finishes, the app service is restarted so the live
+  process picks up the fresh DuckDB file.
+
+### GitHub Actions secrets
+
+Create these repository secrets before enabling the workflow:
+
+- `EC2_HOST`
+- `EC2_USER`
+- `EC2_APP_DIR`
+- `EC2_APP_USER`
+- `EC2_APP_PORT`
+- `EC2_SSH_PRIVATE_KEY`
+- `EC2_ENV_FILE`
+
+`EC2_ENV_FILE` should contain the full remote `.env` file content as a multiline
+secret.
+
+### Workflow behavior
+
+On push to `main` or on manual dispatch, the workflow:
+
+1. validates Python syntax
+2. syncs the repo to EC2
+3. writes the remote `.env`
+4. restarts the app quickly
+5. starts analytics rebuild in the background
+
+### Remote status files
+
+- Rebuild status: `tmp/analytics_rebuild_status.json`
+- Rebuild log: `logs/analytics_rebuild.log`
