@@ -1463,7 +1463,7 @@ function renderDashboardPricePositioning(insights) {
   const canvas = document.getElementById('dashboardPricePositioningChart');
   if (!canvas || !window.Chart) return;
 
-  const matrix = Array.isArray(insights.brand_valuation_matrix) ? insights.brand_valuation_matrix.slice(0, 15) : [];
+  const matrix = Array.isArray(insights.brand_valuation_matrix) ? insights.brand_valuation_matrix.slice(0, 25) : [];
   if (dashboardPricePositioningChartInst) dashboardPricePositioningChartInst.destroy();
 
   if (!matrix.length) {

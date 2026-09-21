@@ -1907,7 +1907,7 @@ def get_insights():
             "formatted_value": format_currency_in(b["inventory_count"] * b["avg_price"]),
             "units": b["inventory_count"]
         }
-        for b in top_brands[:5]
+        for b in top_brands[:25]
     ]
 
     inventory_valuation = {
