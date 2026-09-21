@@ -571,15 +571,18 @@
             </div>
           </div>
 
-          <!-- Warehouse Stock Summary -->
+          <!-- Regional Demand Hotspots -->
           <div class="chart-card">
             <div class="chart-card-header">
               <div>
-                <h3 class="chart-title">Warehouse Stock Summary</h3>
-                <span class="chart-desc">Live warehouse stock coverage for the current catalog scope</span>
+                <h3 class="chart-title">Regional Demand Hotspots</h3>
+                <span class="chart-desc">Warehouse location share across the current catalog scope</span>
               </div>
             </div>
-            <div class="chart-body" style="padding: 16px;">
+            <div class="chart-body" style="padding: 16px; display: flex; flex-direction: column; gap: 14px;">
+              <div style="border: 1px solid #e2e8f0; border-radius: 14px; background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%); padding: 12px; display: flex; align-items: center; justify-content: center; min-height: 170px;">
+                <img src="assets/india_map.png" alt="India Map" style="max-width: 100%; max-height: 146px; object-fit: contain;" />
+              </div>
               <div class="geo-rank-list" id="geoDemandList">
                 <!-- Dynamically injected -->
               </div>

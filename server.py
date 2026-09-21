@@ -3021,11 +3021,12 @@ def get_daily_sales_ros_analytics():
     """100% Genuine dynamic telemetry endpoint for Daily Sales, Revenue & ROS Intelligence dashboard."""
     category = request.args.get("category", "all").strip().lower()
     gender = request.args.get("gender", "all").strip().lower()
+    brand = request.args.get("brand", "all").strip()
     days = int(request.args.get("days", 30))
     status_filter = request.args.get("status", "all").strip().lower()
     search = request.args.get("search", "").strip().lower()
 
-    cache_key = f"daily_sales_ros_v3:{category}:{gender}:{days}:{status_filter}:{search}"
+    cache_key = f"daily_sales_ros_v4:{category}:{gender}:{brand}:{days}:{status_filter}:{search}"
     cached = _load_shared_cache(cache_key)
     if cached is not None:
         api_cache.set(cache_key, cached, ttl=300.0)
@@ -3057,6 +3058,10 @@ def get_daily_sales_ros_analytics():
         needs_join = True
         where_parts.append("LOWER(p.gender) = ?")
         params.append(gender)
+    if brand and brand.lower() != "all":
+        needs_join = True
+        where_parts.append("LOWER(p.brand) = ?")
+        params.append(brand.lower())
     if status_filter == "oos" or bool(search):
         needs_join = True
 

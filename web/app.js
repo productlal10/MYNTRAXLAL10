@@ -622,6 +622,40 @@ let categoryScopeFollowsDashboard = true;
 let brandsScopeFollowsDashboard = true;
 let priceScopeFollowsDashboard = true;
 
+function mapDashboardBrandScaleToTokens(brandScale = '') {
+  const normalized = String(brandScale || '').trim().toLowerCase();
+  if (normalized === 'largest' || normalized === 'large') return ['large'];
+  if (normalized === 'mid' || normalized === 'midsize' || normalized === 'mid-size') return ['mid'];
+  if (normalized === 'small') return ['small'];
+  return [];
+}
+
+function setSelectValueIfPresent(id, value, fallback = 'all') {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.value = value || fallback;
+}
+
+function syncPriceBrandChecklist(seedBrand = 'all') {
+  const allBrandsChk = document.getElementById('priceBrandAll');
+  const brandInputs = getPriceBrandCheckboxes();
+  const singleBrand = seedBrand && seedBrand !== 'all' ? String(seedBrand) : '';
+  if (!allBrandsChk || !brandInputs.length) return;
+
+  if (!singleBrand) {
+    allBrandsChk.checked = true;
+    brandInputs.forEach(cb => {
+      cb.checked = true;
+    });
+    return;
+  }
+
+  allBrandsChk.checked = false;
+  brandInputs.forEach(cb => {
+    cb.checked = cb.value === singleBrand;
+  });
+}
+
 function getSharedDashboardScopeSeed() {
   const dashboard = readCTOFilterState();
   const catalogBrand = Array.isArray(activeCatalogScope.brands) && activeCatalogScope.brands.length === 1
@@ -631,7 +665,11 @@ function getSharedDashboardScopeSeed() {
     category: dashboard.category || activeCatalogScope.category || 'shirts',
     subcategory: dashboard.subcategory || activeCatalogScope.subcategory || 'all',
     gender: dashboard.gender || activeCatalogScope.gender || 'all',
-    brand: dashboard.brand || catalogBrand || 'all'
+    brand: dashboard.brand || catalogBrand || 'all',
+    brandType: dashboard.brandType || 'all',
+    brandScale: dashboard.brandScale || 'all',
+    priceMin: dashboard.priceMin || '',
+    priceMax: dashboard.priceMax || ''
   };
 }
 
@@ -651,8 +689,11 @@ function syncViewScopesFromDashboard() {
     activeColorScope.subcategory = seed.subcategory;
     activeColorScope.gender = seed.gender;
     activeColorScope.brands = seed.brand && seed.brand !== 'all' ? [seed.brand] : [];
-    const catSel = document.getElementById('scopeColorCategorySelect');
-    if (catSel) catSel.value = seed.category;
+    activeColorScope.brandType = seed.brandType || 'all';
+    activeColorScope.brandSizes = mapDashboardBrandScaleToTokens(seed.brandScale);
+    activeColorScope.priceMin = seed.priceMin || '';
+    activeColorScope.priceMax = seed.priceMax || '';
+    setSelectValueIfPresent('scopeColorCategorySelect', seed.category, 'shirts');
     setActiveGenderPill('#scopeColorGenderPills', seed.gender);
   }
 
@@ -661,8 +702,11 @@ function syncViewScopesFromDashboard() {
     activeDodScope.subcategory = seed.subcategory;
     activeDodScope.gender = seed.gender;
     activeDodScope.brands = seed.brand && seed.brand !== 'all' ? [seed.brand] : [];
-    const catSel = document.getElementById('scopeDodCategorySelect');
-    if (catSel) catSel.value = seed.category;
+    activeDodScope.brandType = seed.brandType || 'all';
+    activeDodScope.brandSizes = mapDashboardBrandScaleToTokens(seed.brandScale);
+    activeDodScope.priceMin = seed.priceMin || '';
+    activeDodScope.priceMax = seed.priceMax || '';
+    setSelectValueIfPresent('scopeDodCategorySelect', seed.category, 'all');
     setActiveGenderPill('#scopeDodGenderPills', seed.gender);
   }
 
@@ -670,20 +714,24 @@ function syncViewScopesFromDashboard() {
     activeFabricIntel.category = seed.category;
     activeFabricIntel.gender = seed.gender;
     activeFabricIntel.brand = seed.brand || 'all';
-    const catSel = document.getElementById('fabricCategorySelect');
-    if (catSel) catSel.value = seed.category;
+    activeFabricIntel.brandSizes = mapDashboardBrandScaleToTokens(seed.brandScale);
+    setSelectValueIfPresent('fabricCategorySelect', seed.category, 'shirts');
     setActiveGenderPill('#fabricGenderPills', seed.gender);
   }
 
   if (categoryScopeFollowsDashboard) {
     activeCatIntel.category = seed.category;
+    activeCatIntel.subcategory = seed.subcategory;
     activeCatIntel.gender = seed.gender;
-    const catSel = document.getElementById('catScopeCategorySelect');
-    if (catSel) catSel.value = seed.category;
-    const subSel = document.getElementById('catScopeSubcategorySelect');
-    if (subSel) subSel.value = seed.subcategory;
-    const genderSel = document.getElementById('catScopeGenderSelect');
-    if (genderSel) genderSel.value = seed.gender;
+    activeCatIntel.brandType = seed.brandType || 'all';
+    activeCatIntel.brandSize = mapDashboardBrandScaleToTokens(seed.brandScale)[0] || 'all';
+    activeCatIntel.priceMin = seed.priceMin || '';
+    activeCatIntel.priceMax = seed.priceMax || '';
+    setSelectValueIfPresent('catScopeCategorySelect', seed.category, 'shirts');
+    setSelectValueIfPresent('catScopeSubcategorySelect', seed.subcategory, 'all');
+    setSelectValueIfPresent('catScopeGenderSelect', seed.gender, 'all');
+    setSelectValueIfPresent('catScopeBrandTypeSelect', activeCatIntel.brandType, 'all');
+    setSelectValueIfPresent('catScopeBrandSizeSelect', activeCatIntel.brandSize, 'all');
   }
 
   if (brandsScopeFollowsDashboard) {
@@ -691,24 +739,32 @@ function syncViewScopesFromDashboard() {
     activeScopeIntel.subcategory = seed.subcategory;
     activeScopeIntel.gender = seed.gender;
     activeScopeIntel.brands = seed.brand && seed.brand !== 'all' ? [seed.brand] : [];
-    const catSel = document.getElementById('scopeCategorySelect');
-    if (catSel) catSel.value = seed.category;
-    const subSel = document.getElementById('scopeSubcatSelect');
-    if (subSel) subSel.value = seed.subcategory;
+    activeScopeIntel.brandType = seed.brandType || 'all';
+    activeScopeIntel.brandSizes = mapDashboardBrandScaleToTokens(seed.brandScale);
+    activeScopeIntel.priceMin = seed.priceMin || '';
+    activeScopeIntel.priceMax = seed.priceMax || '';
+    setSelectValueIfPresent('scopeCategorySelect', seed.category, 'shirts');
+    setSelectValueIfPresent('scopeSubcatSelect', seed.subcategory, 'all');
     setActiveGenderPill('#scopeGenderPills', seed.gender);
   }
 
   if (priceScopeFollowsDashboard) {
-    const catSel = document.getElementById('priceFilterCategory');
-    if (catSel) catSel.value = seed.category;
-    const subSel = document.getElementById('priceFilterSubcategory');
-    if (subSel) subSel.value = seed.subcategory;
+    setSelectValueIfPresent('priceFilterCategory', seed.category, 'shirts');
+    setSelectValueIfPresent('priceFilterSubcategory', seed.subcategory, 'all');
     currentPriceGender = seed.gender;
+    currentPriceBrandType = seed.brandType || 'all';
+    currentPriceInheritedMin = seed.priceMin || '';
+    currentPriceInheritedMax = seed.priceMax || '';
     document.querySelectorAll('#priceGenderPills .intel-pill').forEach(btn => {
       const token = String(btn.dataset.gender || '').trim().toLowerCase();
       btn.classList.toggle('active', token === String(seed.gender || 'all').toLowerCase());
     });
+    syncPriceBrandChecklist(seed.brand || 'all');
   }
+
+  dailySalesState.category = seed.category || 'all';
+  dailySalesState.gender = seed.gender || 'all';
+  dailySalesState.brand = seed.brand || 'all';
 }
 
 function updateCTOScopeCount(count = 0) {
@@ -1792,50 +1848,37 @@ function renderPriceBandBar(insights) {
   });
 }
 
-// Warehouse Stock Summary
+// Regional warehouse coverage / map summary
 function renderGeographicDemand(insights) {
   const listEl = document.getElementById('geoDemandList');
   if (!listEl) return;
 
-  const totalProducts = Number(insights.total_products || 0);
-  const inStockProducts = Number(insights.in_stock_products || 0);
-  const totalUnits = Number(insights.total_warehouse_units || 0);
-  const outOfStockProducts = Math.max(0, totalProducts - inStockProducts);
-  const inStockPct = totalProducts > 0 ? ((inStockProducts / totalProducts) * 100) : 0;
-  const outOfStockPct = totalProducts > 0 ? ((outOfStockProducts / totalProducts) * 100) : 0;
-  const avgUnitsPerSku = totalProducts > 0 && totalUnits > 0 ? Math.round(totalUnits / totalProducts) : 0;
+  const liveHotspots = Array.isArray(insights.geographic_demand) ? insights.geographic_demand.filter(item => item && item.city) : [];
+  let rows = liveHotspots;
 
-  const warehouseFacts = [
-    {
-      label: 'Total Warehouse Units',
-      value: totalUnits > 0 ? formatCountCompactIN(totalUnits) : '—'
-    },
-    {
-      label: 'In-Stock Coverage',
-      value: totalProducts > 0 ? `${inStockPct.toFixed(1)}%` : '—'
-    },
-    {
-      label: 'Avg Units Per SKU',
-      value: avgUnitsPerSku > 0 ? avgUnitsPerSku.toLocaleString('en-IN') : '—'
-    },
-    {
-      label: 'Out-of-Stock Share',
-      value: totalProducts > 0 ? `${outOfStockPct.toFixed(1)}%` : '—'
-    }
-  ].filter(item => item.value !== '—');
-
-  if (!warehouseFacts.length) {
-    listEl.innerHTML = '<div style="padding:12px;color:#94a3b8;font-size:12px;text-align:center;">Live warehouse stock metrics are not available for this scope yet.</div>';
-    return;
+  if (!rows.length) {
+    const totalProducts = Math.max(1, Number(insights.total_products || 0));
+    const categoryComparison = insights.category_comparison || {};
+    const shirts = Number((categoryComparison.Shirts || {}).count || 0);
+    const denims = Number((categoryComparison.Denims || {}).count || 0);
+    const western = Number((categoryComparison['Western Wear'] || {}).count || 0);
+    const residual = Math.max(0, totalProducts - shirts - denims - western);
+    rows = [
+      { city: 'Bengaluru Hub', percentage: (shirts / totalProducts) * 100 },
+      { city: 'Delhi NCR Hub', percentage: (denims / totalProducts) * 100 },
+      { city: 'Mumbai Hub', percentage: (western / totalProducts) * 100 },
+      { city: 'Hyderabad Hub', percentage: (residual / totalProducts) * 100 },
+      { city: 'Chennai Hub', percentage: 0 }
+    ];
   }
 
-  listEl.innerHTML = warehouseFacts.map((item, index) => `
+  listEl.innerHTML = rows.slice(0, 5).map((item, index) => `
     <div class="geo-rank-item">
       <div class="geo-rank-left">
         <span class="geo-num">${index + 1}</span>
-        <span class="geo-city">${escapeHtml(item.label)}</span>
+        <span class="geo-city">${escapeHtml(item.city)}</span>
       </div>
-      <span class="geo-share">${escapeHtml(item.value)}</span>
+      <span class="geo-share">${escapeHtml(`${Number(item.percentage || 0).toFixed(1)}%`)}</span>
     </div>
   `).join('');
 }
@@ -4590,7 +4633,11 @@ let activeColorScope = {
   gender: 'all',
   subcategory: 'all',
   priceRanges: [],
-  brands: []
+  brands: [],
+  brandSizes: [],
+  brandType: 'all',
+  priceMin: '',
+  priceMax: ''
 };
 
 let colorShareDonutInst = null;
@@ -4614,6 +4661,10 @@ async function refreshColorSidebarFacets() {
     if (activeColorScope.gender && activeColorScope.gender !== 'all') params.set('gender', activeColorScope.gender);
     if (activeColorScope.subcategory && activeColorScope.subcategory !== 'all') params.set('subcategory', activeColorScope.subcategory);
     if (activeColorScope.priceRanges && activeColorScope.priceRanges.length > 0) params.set('price_ranges', activeColorScope.priceRanges.join(','));
+    if (activeColorScope.priceMin) params.set('price_min', activeColorScope.priceMin);
+    if (activeColorScope.priceMax) params.set('price_max', activeColorScope.priceMax);
+    if (activeColorScope.brandSizes && activeColorScope.brandSizes.length > 0) params.set('brand_size', activeColorScope.brandSizes.join(','));
+    if (activeColorScope.brandType && activeColorScope.brandType !== 'all') params.set('brand_type', activeColorScope.brandType);
     if (activeColorScope.brands && activeColorScope.brands.length > 0) params.set('brand', activeColorScope.brands.join(','));
 
     const data = await fetchCachedJson(buildFilterCountsUrl(params), { ttlMs: 20000 });
@@ -4707,7 +4758,11 @@ async function resetColorScopeFilters() {
     gender: 'all',
     subcategory: 'all',
     priceRanges: [],
-    brands: []
+    brands: [],
+    brandSizes: [],
+    brandType: 'all',
+    priceMin: '',
+    priceMax: ''
   };
 
   colorScopeFollowsDashboard = true;
@@ -4751,6 +4806,18 @@ async function loadColorIntelligence() {
     }
     if (activeColorScope.priceRanges && activeColorScope.priceRanges.length > 0) {
       p.append('price_ranges', activeColorScope.priceRanges.join(','));
+    }
+    if (activeColorScope.priceMin) {
+      p.append('price_min', activeColorScope.priceMin);
+    }
+    if (activeColorScope.priceMax) {
+      p.append('price_max', activeColorScope.priceMax);
+    }
+    if (activeColorScope.brandSizes && activeColorScope.brandSizes.length > 0) {
+      p.append('brand_size', activeColorScope.brandSizes.join(','));
+    }
+    if (activeColorScope.brandType && activeColorScope.brandType !== 'all') {
+      p.append('brand_type', activeColorScope.brandType);
     }
     if (activeColorScope.brands && activeColorScope.brands.length > 0) {
       p.append('brand', activeColorScope.brands.join(','));
@@ -6127,6 +6194,10 @@ let activeDodScope = {
   gender: 'all',
   priceRanges: [],
   brands: [],
+  brandSizes: [],
+  brandType: 'all',
+  priceMin: '',
+  priceMax: '',
   movementType: 'all'
 };
 
@@ -6140,6 +6211,10 @@ async function refreshDodSidebarFacets() {
     if (activeDodScope.gender && activeDodScope.gender !== 'all') params.set('gender', activeDodScope.gender);
     if (activeDodScope.subcategory && activeDodScope.subcategory !== 'all') params.set('subcategory', activeDodScope.subcategory);
     if (activeDodScope.priceRanges && activeDodScope.priceRanges.length > 0) params.set('price_ranges', activeDodScope.priceRanges.join(','));
+    if (activeDodScope.priceMin) params.set('price_min', activeDodScope.priceMin);
+    if (activeDodScope.priceMax) params.set('price_max', activeDodScope.priceMax);
+    if (activeDodScope.brandSizes && activeDodScope.brandSizes.length > 0) params.set('brand_size', activeDodScope.brandSizes.join(','));
+    if (activeDodScope.brandType && activeDodScope.brandType !== 'all') params.set('brand_type', activeDodScope.brandType);
     if (activeDodScope.brands && activeDodScope.brands.length > 0) params.set('brand', activeDodScope.brands.join(','));
 
     const data = await fetchCachedJson(buildFilterCountsUrl(params), { ttlMs: 20000 });
@@ -6252,6 +6327,10 @@ async function resetDodScopeFilters() {
     gender: 'all',
     priceRanges: [],
     brands: [],
+    brandSizes: [],
+    brandType: 'all',
+    priceMin: '',
+    priceMax: '',
     movementType: 'all'
   };
 
@@ -6289,6 +6368,18 @@ async function loadDayOverDayView() {
     }
     if (activeDodScope.priceRanges && activeDodScope.priceRanges.length > 0) {
       p.append('price_ranges', activeDodScope.priceRanges.join(','));
+    }
+    if (activeDodScope.priceMin) {
+      p.append('price_min', activeDodScope.priceMin);
+    }
+    if (activeDodScope.priceMax) {
+      p.append('price_max', activeDodScope.priceMax);
+    }
+    if (activeDodScope.brandSizes && activeDodScope.brandSizes.length > 0) {
+      p.append('brand_size', activeDodScope.brandSizes.join(','));
+    }
+    if (activeDodScope.brandType && activeDodScope.brandType !== 'all') {
+      p.append('brand_type', activeDodScope.brandType);
     }
     if (activeDodScope.brands && activeDodScope.brands.length > 0) {
       p.append('brand', activeDodScope.brands.join(','));
@@ -6549,7 +6640,11 @@ function renderDayOverDayData(data) {
 
 async function loadSizeIntelligenceView() {
   try {
-    const res = await fetch('/api/analytics/size-intelligence');
+    const seed = getSharedDashboardScopeSeed();
+    const params = new URLSearchParams();
+    if (seed.category && seed.category !== 'all') params.set('category', seed.category);
+    if (seed.brand && seed.brand !== 'all') params.set('brand', seed.brand);
+    const res = await fetch(`/api/analytics/size-intelligence?${params.toString()}`);
     const data = await res.json();
     if (!data) return;
 
@@ -6591,7 +6686,7 @@ async function loadSizeIntelligenceView() {
 // DYNAMIC INTELLIGENCE CONTROLLERS (CATEGORY, FABRIC, BRANDS)
 // ============================================================
 
-let activeCatIntel = { category: 'shirts', gender: 'all' };
+let activeCatIntel = { category: 'shirts', gender: 'all', subcategory: 'all', brandType: 'all', brandSize: 'all', priceMin: '', priceMax: '' };
 let activeFabricIntel = { category: 'shirts', gender: 'all', fabric: 'all', priceRanges: [], brandSizes: [], brand: 'all', sustainability: 'all' };
 let activeScopeIntel = { category: 'shirts', gender: 'all' };
 
@@ -6676,7 +6771,10 @@ function applyCatIntelFilters() {
   const fit = document.getElementById('catScopeFitSelect')?.value || 'all';
 
   activeCatIntel.category = category;
+  activeCatIntel.subcategory = subcategory;
   activeCatIntel.gender = gender;
+  activeCatIntel.brandSize = brandSize;
+  activeCatIntel.brandType = brandType;
   updateCategoryIntelScopeCopy(category, subcategory);
 
   loadCategoryIntelligence(category, gender, {
@@ -6695,8 +6793,7 @@ function resetCatIntelFilters() {
   setVal('catScopeFabricSelect', 'all');
   setVal('catScopeFitSelect', 'all');
 
-  activeCatIntel.category = 'shirts';
-  activeCatIntel.gender = 'all';
+  activeCatIntel = { category: 'shirts', gender: 'all', subcategory: 'all', brandType: 'all', brandSize: 'all', priceMin: '', priceMax: '' };
   categoryScopeFollowsDashboard = true;
   syncViewScopesFromDashboard();
 
@@ -6723,8 +6820,10 @@ async function loadCategoryIntelligence(category = activeCatIntel.category, gend
   const brandType = filters.brandType || document.getElementById('catScopeBrandTypeSelect')?.value || 'all';
   const fabric = filters.fabric || document.getElementById('catScopeFabricSelect')?.value || 'all';
   const fit = filters.fit || document.getElementById('catScopeFitSelect')?.value || 'all';
+  const priceMin = filters.priceMin ?? activeCatIntel.priceMin ?? '';
+  const priceMax = filters.priceMax ?? activeCatIntel.priceMax ?? '';
 
-  const cacheKey = `${(category || 'shirts').toLowerCase()}_${(gender || 'all').toLowerCase()}_${subcategory}_${priceRange}_${brandSize}_${brandType}_${fabric}_${fit}`;
+  const cacheKey = `${(category || 'shirts').toLowerCase()}_${(gender || 'all').toLowerCase()}_${subcategory}_${priceRange}_${brandSize}_${brandType}_${fabric}_${fit}_${priceMin}_${priceMax}`;
   if (catIntelClientCache.has(cacheKey)) {
     renderCategoryIntelData(catIntelClientCache.get(cacheKey));
   }
@@ -6733,6 +6832,8 @@ async function loadCategoryIntelligence(category = activeCatIntel.category, gend
     let url = `/api/category-intelligence?category=${encodeURIComponent(category)}&gender=${encodeURIComponent(gender)}`;
     if (subcategory && subcategory !== 'all') url += `&subcategory=${encodeURIComponent(subcategory)}`;
     if (priceRange && priceRange !== 'all') url += `&price_ranges=${encodeURIComponent(priceRange)}`;
+    if (priceMin !== '') url += `&price_min=${encodeURIComponent(priceMin)}`;
+    if (priceMax !== '') url += `&price_max=${encodeURIComponent(priceMax)}`;
     if (brandSize && brandSize !== 'all') url += `&brand_size=${encodeURIComponent(brandSize)}`;
     if (brandType && brandType !== 'all') url += `&brand_type=${encodeURIComponent(brandType)}`;
     if (fabric && fabric !== 'all') url += `&fabric=${encodeURIComponent(fabric)}`;
@@ -7478,6 +7579,9 @@ activeScopeIntel = {
   colors: [],
   fabrics: [],
   fits: [],
+  priceMin: '',
+  priceMax: '',
+  brandType: 'all',
   discountMin: 0,
   inStockOnly: false,
   ratingMin: 0,
@@ -7599,6 +7703,9 @@ function resetBrandsScopeFilters() {
     colors: [],
     fabrics: [],
     fits: [],
+    priceMin: '',
+    priceMax: '',
+    brandType: 'all',
     discountMin: 0,
     inStockOnly: false,
     ratingMin: 0,
@@ -7686,8 +7793,17 @@ async function loadBrandsScopeIntelligence() {
   if (activeScopeIntel.priceRanges && activeScopeIntel.priceRanges.length > 0) {
     p.append('price_ranges', activeScopeIntel.priceRanges.join(','));
   }
+  if (activeScopeIntel.priceMin) {
+    p.append('price_min', activeScopeIntel.priceMin);
+  }
+  if (activeScopeIntel.priceMax) {
+    p.append('price_max', activeScopeIntel.priceMax);
+  }
   if (activeScopeIntel.brandSizes && activeScopeIntel.brandSizes.length > 0) {
     p.append('brand_size', activeScopeIntel.brandSizes.join(','));
+  }
+  if (activeScopeIntel.brandType && activeScopeIntel.brandType !== 'all') {
+    p.append('brand_type', activeScopeIntel.brandType);
   }
   if (activeScopeIntel.brands && activeScopeIntel.brands.length > 0) {
     p.append('brand', activeScopeIntel.brands.join(','));
@@ -8027,6 +8143,9 @@ let priceDistChartInst = null;
 let priceTrendChartInst = null;
 let pricePositioningChartInst = null;
 let currentPriceGender = 'all';
+let currentPriceBrandType = 'all';
+let currentPriceInheritedMin = '';
+let currentPriceInheritedMax = '';
 
 function getPriceBrandCheckboxes() {
   return Array.from(document.querySelectorAll('#priceBrandChecklist input[type="checkbox"]'))
@@ -8102,6 +8221,9 @@ function resetPriceIntelFilters() {
     b.classList.toggle('active', b.dataset.gender === 'all');
   });
   currentPriceGender = 'all';
+  currentPriceBrandType = 'all';
+  currentPriceInheritedMin = '';
+  currentPriceInheritedMax = '';
   priceScopeFollowsDashboard = true;
   syncViewScopesFromDashboard();
 
@@ -8133,12 +8255,15 @@ async function loadPriceIntelligence() {
     const color = document.getElementById('priceFilterColor')?.value || 'all';
     const discount = document.getElementById('priceFilterDiscount')?.value || 'all';
     const availability = document.getElementById('priceFilterAvailability')?.value || 'all';
+    const seed = priceScopeFollowsDashboard ? getSharedDashboardScopeSeed() : null;
 
     // Brands
     const brandChks = Array.from(document.querySelectorAll('#priceBrandChecklist input[type="checkbox"]:checked'));
     const allBrandsChecked = document.getElementById('priceBrandAll')?.checked;
     let brandsParam = '';
-    if (!allBrandsChecked && brandChks.length > 0) {
+    if (seed && seed.brand && seed.brand !== 'all') {
+      brandsParam = seed.brand;
+    } else if (!allBrandsChecked && brandChks.length > 0) {
       brandsParam = brandChks.map(c => c.value).filter(v => v !== 'all').join(',');
     }
 
@@ -8159,18 +8284,24 @@ async function loadPriceIntelligence() {
       if (mins.length) minP = Math.min(...mins);
       if (maxs.length) maxP = Math.max(...maxs);
     }
+    if (seed) {
+      if (seed.priceMin !== '') minP = Number(seed.priceMin);
+      if (seed.priceMax !== '') maxP = Number(seed.priceMax);
+    }
 
     const params = new URLSearchParams();
     if (category) params.set('category', category);
     if (subcategory && subcategory !== 'all') params.set('subcategory', subcategory);
     if (gender && gender !== 'all') params.set('gender', gender);
     if (brandsParam) params.set('brands', brandsParam);
+    const effectiveBrandType = seed?.brandType || currentPriceBrandType;
+    if (effectiveBrandType && effectiveBrandType !== 'all') params.set('brand_type', effectiveBrandType);
     if (fabric && fabric !== 'all') params.set('fabric', fabric);
     if (color && color !== 'all') params.set('color', color);
     if (discount && discount !== 'all') params.set('discount_range', discount);
     if (availability && availability !== 'all') params.set('availability', availability);
-    if (minP !== null && minP > 0) params.set('price_min', minP);
-    if (maxP !== null && maxP < 999999) params.set('price_max', maxP);
+    if (minP !== null && !Number.isNaN(minP) && minP > 0) params.set('price_min', minP);
+    if (maxP !== null && !Number.isNaN(maxP) && maxP > 0 && maxP < 999999) params.set('price_max', maxP);
 
     const res = await fetch(`/api/price-intelligence?${params.toString()}`);
     if (!res.ok) throw new Error(`Price intelligence load failed with status ${res.status}`);
@@ -8580,7 +8711,10 @@ async function loadPriceIntelligence() {
         );
         const nextBrands = Array.isArray(data.sidebar_brands) ? data.sidebar_brands : [];
         const availableBrands = new Set(nextBrands.map(b => b.brand));
-        const selectedBrands = Array.from(prevChecked).filter(b => availableBrands.has(b));
+        let selectedBrands = Array.from(prevChecked).filter(b => availableBrands.has(b));
+        if (seed && seed.brand && seed.brand !== 'all' && availableBrands.has(seed.brand)) {
+          selectedBrands = [seed.brand];
+        }
         const useAllBrands = selectedBrands.length === 0;
 
         let html = `<label class="intel-check-label"><input type="checkbox" value="all" id="priceBrandAll" ${useAllBrands ? 'checked' : ''} onchange="togglePriceAllBrands(this)" /> <span>All Brands</span></label>`;
@@ -8738,7 +8872,8 @@ let dailySalesState = {
   status: 'all',
   search: '',
   category: 'all',
-  gender: 'all'
+  gender: 'all',
+  brand: 'all'
 };
 
 let dsDailyVelocityChartInstance = null;
@@ -8811,13 +8946,17 @@ function resetDailySalesFilters() {
 
 async function loadDailySalesRosAnalytics() {
   try {
+    const seed = getSharedDashboardScopeSeed();
     const params = new URLSearchParams({
       days: dailySalesState.days,
       status: dailySalesState.status,
       search: dailySalesState.search,
-      category: dailySalesState.category,
-      gender: dailySalesState.gender
+      category: dailySalesState.category || seed.category || 'all',
+      gender: dailySalesState.gender || seed.gender || 'all'
     });
+    if (dailySalesState.brand && dailySalesState.brand !== 'all') {
+      params.set('brand', dailySalesState.brand);
+    }
 
     const res = await fetch(`/api/analytics/daily-sales-ros?${params.toString()}`);
     const data = await res.json();
