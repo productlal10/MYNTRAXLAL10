@@ -1413,19 +1413,13 @@ function renderDashboardKPIs(stats, insights) {
   const avgUnits = total > 0 && totalUnits && totalUnits > 0 ? Math.round(totalUnits / total) : 0;
   setTxt('kpiAvgUnitsSku', avgUnits > 0 ? `Avg ~${avgUnits.toLocaleString()} units per SKU` : 'Waiting for inventory sync');
 
-  // KPI 4: Inventory Valuation — live scoped stock value
-  const valuation = Number(insights.inventory_valuation?.total_stock_value || 0);
-  const valuationMrp = Number(insights.inventory_valuation?.total_mrp_value || 0);
-  setTxt('kpiInventoryValuation', valuation > 0 ? formatCurrencyCompactIN(valuation) : '—');
-  setTxt('kpiInventoryValuationSub', valuationMrp > 0 ? `MRP value ${formatCurrencyCompactIN(valuationMrp)}` : 'Sell-side stock value');
-
-  // KPI 5: Median Selling Price — primary market read
+  // KPI 4: Median Selling Price — primary market read
   const meanPriceRaw = insights.cto_pricing?.mean_price ?? stats.average_price ?? insights.avg_price ?? 0;
   const avgPrice = Math.round(Number(meanPriceRaw || 0));
   const avgMrp = Math.round(Number(insights.avg_mrp || stats.average_mrp || 0));
   const medianPrice = Math.round(Number(insights.cto_pricing?.median_price || 0));
   const modePrice = Math.round(Number(insights.cto_pricing?.mode_price || 0));
-  setTxt('kpiMeanPrice', medianPrice > 0 ? `₹${medianPrice.toLocaleString('en-IN')}` : '—');
+  setTxt('kpiMedianPrice', medianPrice > 0 ? `₹${medianPrice.toLocaleString('en-IN')}` : '—');
   const priceTrendEl = document.getElementById('kpiTrendMeanPrice');
   if (priceTrendEl) {
     priceTrendEl.textContent = 'Live';
@@ -1434,21 +1428,21 @@ function renderDashboardKPIs(stats, insights) {
   const iqrLow = Number(insights.cto_pricing?.p25_price || 0);
   const iqrHigh = Number(insights.cto_pricing?.p75_price || 0);
   setTxt(
-    'kpiMeanPriceSub',
+    'kpiMedianPriceSub',
     iqrLow > 0 && iqrHigh > 0
       ? `Middle 50%: ₹${Math.round(iqrLow).toLocaleString('en-IN')} – ₹${Math.round(iqrHigh).toLocaleString('en-IN')}`
       : '50th percentile price signal'
   );
 
-  // KPI 6: Mean Selling Price — supporting context for skew
-  setTxt('kpiMedianPrice', `₹${avgPrice.toLocaleString('en-IN')}`);
+  // KPI 5: Mean Selling Price — supporting context for skew
+  setTxt('kpiMeanPrice', `₹${avgPrice.toLocaleString('en-IN')}`);
   const meanTrendEl = document.getElementById('kpiTrendMedianPrice');
   if (meanTrendEl) {
     meanTrendEl.textContent = 'Context';
     meanTrendEl.className = 'kpi-trend neutral';
   }
   setTxt(
-    'kpiMedianPriceSub',
+    'kpiMeanPriceSub',
     modePrice > 0
       ? `Most common price ₹${modePrice.toLocaleString('en-IN')}${avgMrp > 0 ? ` • Avg MRP ₹${avgMrp.toLocaleString('en-IN')}` : ''}`
       : (avgMrp > 0 ? `Avg MRP ₹${avgMrp.toLocaleString('en-IN')}` : 'Arithmetic mean price')
@@ -8056,31 +8050,31 @@ async function loadPriceIntelligence() {
     const medianDelta = formatDeltaBadge(kpis.median_price_delta);
     const discountDelta = formatDeltaBadge(kpis.discounted_delta);
     if (document.getElementById('priceKpiAvg')) {
-      document.getElementById('priceKpiAvg').textContent = displayValue(kpis.median_price_formatted);
+      document.getElementById('priceKpiAvg').textContent = displayValue(kpis.avg_price_formatted);
     }
     const avgSubEl = document.getElementById('priceKpiAvgSub');
     if (avgSubEl) {
       avgSubEl.textContent = availability === 'low_stock'
-        ? 'Primary median signal for low-stock slices'
-        : 'Primary analytics price signal vs baseline';
+        ? 'Supporting mean read when stock mix is thin'
+        : 'Arithmetic mean vs baseline';
     }
     if (document.getElementById('priceKpiAvgDelta')) {
-      document.getElementById('priceKpiAvgDelta').textContent = medianDelta.text;
-      document.getElementById('priceKpiAvgDelta').className = `intel-kpi-badge ${medianDelta.tone}`;
+      document.getElementById('priceKpiAvgDelta').textContent = avgDelta.text;
+      document.getElementById('priceKpiAvgDelta').className = `intel-kpi-badge ${avgDelta.tone}`;
     }
 
     if (document.getElementById('priceKpiMedian')) {
-      document.getElementById('priceKpiMedian').textContent = displayValue(kpis.avg_price_formatted);
+      document.getElementById('priceKpiMedian').textContent = displayValue(kpis.median_price_formatted);
     }
     const medianSubEl = document.getElementById('priceKpiMedianSub');
     if (medianSubEl) {
       medianSubEl.textContent = availability === 'low_stock'
-        ? 'Supporting mean read when stock mix is thin'
-        : 'Supporting context for outlier skew';
+        ? 'Primary median signal for low-stock slices'
+        : 'Primary analytics price signal vs baseline';
     }
     if (document.getElementById('priceKpiMedianDelta')) {
-      document.getElementById('priceKpiMedianDelta').textContent = avgDelta.text;
-      document.getElementById('priceKpiMedianDelta').className = `intel-kpi-badge ${avgDelta.tone}`;
+      document.getElementById('priceKpiMedianDelta').textContent = medianDelta.text;
+      document.getElementById('priceKpiMedianDelta').className = `intel-kpi-badge ${medianDelta.tone}`;
     }
 
     if (document.getElementById('priceKpiMode')) {
