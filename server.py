@@ -2112,7 +2112,7 @@ def get_insights():
             "brand": b["brand"],
             "sizes": dict(brand_size_breakdown.get(b["brand"], empty_sizes))
         }
-        for b in top_brands[:5]
+        for b in top_brands[:25]
     ]
 
     # Geographic demand should not be inferred from category mix. Until a real regional source is loaded,
