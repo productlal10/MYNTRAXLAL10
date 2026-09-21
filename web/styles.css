@@ -813,6 +813,8 @@ body {
 /* Heatmap Matrix Table */
 .heatmap-table-wrap {
   overflow-x: auto;
+  overflow-y: auto;
+  max-height: 420px;
 }
 
 .heatmap-table {

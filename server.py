@@ -1863,7 +1863,7 @@ def get_insights():
         WHERE {where_sql} AND {_valid_brand_sql("p")}
         GROUP BY p.brand, p.is_myntra_label
         ORDER BY product_count DESC
-        LIMIT 10;
+        LIMIT 25;
     """, where_params)
     top_brands_rows = cur.fetchall()
     brand_inventory_units, brand_size_breakdown, heatmap_columns = _get_brand_inventory_breakdown(
