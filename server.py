@@ -1389,12 +1389,12 @@ def get_insights():
     avg_mrp_val = round(combined[3] or 0, 1)
     avg_discount_val = round(combined[4] or 0, 1)
 
-    inventory_totals = _estimate_inventory_totals(cur, int(total_products or 0), avg_price, avg_mrp_val)
+    inventory_totals = _get_inventory_snapshot_totals(cur, where_sql, where_params)
     total_warehouse_units = _get_scoped_inventory_units(cur, where_sql, where_params)
     if total_warehouse_units <= 0:
         total_warehouse_units = inventory_totals["total_units"]
-    total_selling_val = round(total_warehouse_units * (avg_price or 0.0), 2)
-    total_mrp_val = round(total_warehouse_units * (avg_mrp_val or avg_price or 0.0), 2)
+    total_selling_val = round(inventory_totals.get("selling_value") or (total_warehouse_units * (avg_price or 0.0)), 2)
+    total_mrp_val = round(inventory_totals.get("mrp_value") or (total_warehouse_units * (avg_mrp_val or avg_price or 0.0)), 2)
 
     price_brackets = {
         "under_500": combined[5] or 0,
@@ -1449,28 +1449,40 @@ def get_insights():
     western_disc = round(combined[29] or avg_discount_val, 1)
     others_real_cnt = max(0, total_products - shirts_real_cnt - denims_real_cnt - western_real_cnt)
 
+    cur.execute(f"""
+        SELECT
+            COALESCE(SUM(CASE WHEN p.category = 'Shirts' AND s.available = 1 THEN s.inventory_count ELSE 0 END), 0) as shirts_units,
+            COALESCE(SUM(CASE WHEN p.category = 'Jeans' AND s.available = 1 THEN s.inventory_count ELSE 0 END), 0) as denims_units,
+            COALESCE(SUM(CASE WHEN p.category IN ('Western Wear', 'Dresses', 'Tops', 'Skirts', 'Jumpsuit', 'Jumpsuits') AND s.available = 1 THEN s.inventory_count ELSE 0 END), 0) as western_units,
+            COALESCE(SUM(CASE WHEN p.category NOT IN ('Shirts', 'Jeans', 'Western Wear', 'Dresses', 'Tops', 'Skirts', 'Jumpsuit', 'Jumpsuits') AND s.available = 1 THEN s.inventory_count ELSE 0 END), 0) as others_units
+        FROM products p
+        LEFT JOIN product_sizes s ON s.product_id = p.product_id
+        WHERE {where_sql};
+    """, where_params)
+    category_units_row = cur.fetchone() or {}
+
     category_comparison = {
         "Shirts": {
             "count": shirts_real_cnt,
-            "units": int(total_warehouse_units * (shirts_real_cnt / max(1, total_products))),
+            "units": int(category_units_row["shirts_units"] or 0),
             "avg_price": shirts_price,
             "avg_discount": shirts_disc
         },
         "Denims": {
             "count": denims_real_cnt,
-            "units": int(total_warehouse_units * (denims_real_cnt / max(1, total_products))),
+            "units": int(category_units_row["denims_units"] or 0),
             "avg_price": denims_price,
             "avg_discount": denims_disc
         },
         "Western Wear": {
             "count": western_real_cnt,
-            "units": int(total_warehouse_units * (western_real_cnt / max(1, total_products))),
+            "units": int(category_units_row["western_units"] or 0),
             "avg_price": western_price,
             "avg_discount": western_disc
         },
         "Others": {
             "count": others_real_cnt,
-            "units": int(total_warehouse_units * (others_real_cnt / max(1, total_products))),
+            "units": int(category_units_row["others_units"] or 0),
             "avg_price": round(avg_price, 1),
             "avg_discount": round(avg_discount_val, 1)
         }
@@ -1517,7 +1529,7 @@ def get_insights():
             "is_myntra": bool(r[1]),
             "brand_type": "Myntra In-House Label" if r[1] else "External Brand",
             "product_count": int(r[2] or 0),
-            "inventory_count": brand_inventory_units.get(r[0], int(total_warehouse_units * (int(r[2] or 0) / max(1, total_products)))),
+            "inventory_count": int(brand_inventory_units.get(r[0], 0) or 0),
             "avg_price": float(r[3] or avg_price),
             "avg_discount": float(r[4] or avg_discount_val),
             "avg_rating": float(r[5] or 0.0)
@@ -1836,39 +1848,32 @@ def get_insights():
         }
     ]
 
-    # Keep headline CTO pricing metrics exact so the overview is not driven by a sample.
+    # Keep headline CTO pricing metrics exact across all scopes unless the DB cannot answer.
     cto_mean_price = avg_price
     cto_mean_mrp = avg_mrp_val
     cto_median_price = float(avg_price)
     cto_p25_price = float(avg_price)
     cto_p75_price = float(avg_price)
     cto_mode_price = int(avg_price or 0)
-    should_use_exact_pricing = (
-        total_products <= 50000
-        or any([filter_category, filter_gender, filter_subcategory, filter_brand, filter_brand_type, filter_brand_scale, filter_price_min, filter_price_max])
-    )
     try:
-        if should_use_exact_pricing:
-            cur.execute(f"""
-                SELECT
-                    COALESCE(AVG(p.selling_price), 0) AS mean_price,
-                    COALESCE(AVG(p.mrp), 0) AS mean_mrp,
-                    COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY p.selling_price), 0) AS median_price,
-                    COALESCE(PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY p.selling_price), 0) AS p25_price,
-                    COALESCE(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY p.selling_price), 0) AS p75_price,
-                    COALESCE(MODE() WITHIN GROUP (ORDER BY p.selling_price), 0) AS mode_price
-                FROM products p
-                WHERE {where_sql} AND p.selling_price > 0;
-            """, where_params)
-            cto_row = cur.fetchone() or {}
-            cto_mean_price = float(cto_row["mean_price"] or avg_price)
-            cto_mean_mrp = float(cto_row["mean_mrp"] or avg_mrp_val)
-            cto_median_price = float(cto_row["median_price"] or avg_price)
-            cto_p25_price = float(cto_row["p25_price"] or avg_price)
-            cto_p75_price = float(cto_row["p75_price"] or avg_price)
-            cto_mode_price = int(round(float(cto_row["mode_price"] or avg_price or 0)))
-        else:
-            raise RuntimeError("skip exact overview pricing for very broad scopes")
+        cur.execute(f"""
+            SELECT
+                COALESCE(AVG(p.selling_price), 0) AS mean_price,
+                COALESCE(AVG(p.mrp), 0) AS mean_mrp,
+                COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY p.selling_price), 0) AS median_price,
+                COALESCE(PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY p.selling_price), 0) AS p25_price,
+                COALESCE(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY p.selling_price), 0) AS p75_price,
+                COALESCE(MODE() WITHIN GROUP (ORDER BY p.selling_price), 0) AS mode_price
+            FROM products p
+            WHERE {where_sql} AND p.selling_price > 0;
+        """, where_params)
+        cto_row = cur.fetchone() or {}
+        cto_mean_price = float(cto_row["mean_price"] or avg_price)
+        cto_mean_mrp = float(cto_row["mean_mrp"] or avg_mrp_val)
+        cto_median_price = float(cto_row["median_price"] or avg_price)
+        cto_p25_price = float(cto_row["p25_price"] or avg_price)
+        cto_p75_price = float(cto_row["p75_price"] or avg_price)
+        cto_mode_price = int(round(float(cto_row["mode_price"] or avg_price or 0)))
     except Exception:
         sorted_sample_prices = sorted(sample_prices)
         if sorted_sample_prices:
