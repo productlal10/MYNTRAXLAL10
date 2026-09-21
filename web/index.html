@@ -1071,7 +1071,8 @@
               <div class="sub-filter-group">
                 <label class="sub-filter-label">Gender</label>
                 <div class="gender-pills-row" id="scopeDodGenderPills">
-                  <button class="gender-pill active" onclick="setDodGender('men', this)">Men</button>
+                  <button class="gender-pill active" onclick="setDodGender('all', this)">All</button>
+                  <button class="gender-pill" onclick="setDodGender('men', this)">Men</button>
                   <button class="gender-pill" onclick="setDodGender('women', this)">Women</button>
                   <button class="gender-pill" onclick="setDodGender('kids', this)">Kids</button>
                 </div>
@@ -1841,7 +1842,8 @@
             <div class="intel-filter-group">
               <label class="intel-filter-label">Gender</label>
               <div class="intel-pill-group" id="priceGenderPills">
-                <button type="button" class="intel-pill active" data-gender="men" onclick="setPriceGender(this, 'men')">Men</button>
+                <button type="button" class="intel-pill active" data-gender="all" onclick="setPriceGender(this, 'all')">All</button>
+                <button type="button" class="intel-pill" data-gender="men" onclick="setPriceGender(this, 'men')">Men</button>
                 <button type="button" class="intel-pill" data-gender="women" onclick="setPriceGender(this, 'women')">Women</button>
                 <button type="button" class="intel-pill" data-gender="kids" onclick="setPriceGender(this, 'kids')">Kids</button>
               </div>
@@ -2207,7 +2209,8 @@
               <div class="sub-filter-group">
                 <label class="sub-filter-label">Gender</label>
                 <div class="gender-pills-row" id="scopeColorGenderPills">
-                  <button class="gender-pill active" onclick="setColorGender('men', this)">Men</button>
+                  <button class="gender-pill active" onclick="setColorGender('all', this)">All</button>
+                  <button class="gender-pill" onclick="setColorGender('men', this)">Men</button>
                   <button class="gender-pill" onclick="setColorGender('women', this)">Women</button>
                   <button class="gender-pill" onclick="setColorGender('kids', this)">Kids</button>
                 </div>
@@ -2867,10 +2870,10 @@
                 <div>
                   <label style="display:block; font-size:11px; font-weight:700; color:#64748b; margin-bottom:4px; text-transform:uppercase;">Gender</label>
                   <select id="catScopeGenderSelect" onchange="applyCatIntelFilters()" style="width:100%; padding:8px 10px; font-size:12px; font-weight:600; border-radius:6px; border:1px solid #cbd5e1; background:#ffffff; color:#0f172a;">
-                    <option value="men" selected>Men</option>
+                    <option value="all" selected>All Genders</option>
+                    <option value="men">Men</option>
                     <option value="women">Women</option>
                     <option value="kids">Kids (Boys/Girls)</option>
-                    <option value="all">All Genders</option>
                   </select>
                 </div>
 
@@ -3223,7 +3226,8 @@
               <div class="sub-filter-group">
                 <label class="sub-filter-label">Gender</label>
                 <div class="gender-pills-row" id="fabricGenderPills">
-                  <button class="gender-pill active" onclick="setFabricGender('men', this)">Men</button>
+                  <button class="gender-pill active" onclick="setFabricGender('all', this)">All</button>
+                  <button class="gender-pill" onclick="setFabricGender('men', this)">Men</button>
                   <button class="gender-pill" onclick="setFabricGender('women', this)">Women</button>
                   <button class="gender-pill" onclick="setFabricGender('kids', this)">Kids</button>
                 </div>
@@ -3616,7 +3620,8 @@
                 <div class="sub-filter-group">
                   <label class="sub-filter-label">Gender</label>
                   <div class="gender-pills-row" id="scopeGenderPills">
-                    <button class="gender-pill active" onclick="setScopeGender('men', this)">Men</button>
+                    <button class="gender-pill active" onclick="setScopeGender('all', this)">All</button>
+                    <button class="gender-pill" onclick="setScopeGender('men', this)">Men</button>
                     <button class="gender-pill" onclick="setScopeGender('women', this)">Women</button>
                     <button class="gender-pill" onclick="setScopeGender('kids', this)">Kids</button>
                   </div>

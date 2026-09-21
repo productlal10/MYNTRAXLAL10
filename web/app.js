@@ -432,6 +432,8 @@ function switchView(viewName) {
     });
   }
 
+  syncViewScopesFromDashboard();
+
   // View-specific refreshes
   if (viewName === 'analytics-intelligence') {
     loadDailySalesRosAnalytics();
@@ -611,6 +613,102 @@ function renderCTOActiveFilterPills(items = []) {
     return;
   }
   pillsEl.innerHTML = items.map(item => `<span class="cto-active-pill">${escapeHtml(item)}</span>`).join('');
+}
+
+let colorScopeFollowsDashboard = true;
+let dodScopeFollowsDashboard = true;
+let fabricScopeFollowsDashboard = true;
+let categoryScopeFollowsDashboard = true;
+let brandsScopeFollowsDashboard = true;
+let priceScopeFollowsDashboard = true;
+
+function getSharedDashboardScopeSeed() {
+  const dashboard = readCTOFilterState();
+  const catalogBrand = Array.isArray(activeCatalogScope.brands) && activeCatalogScope.brands.length === 1
+    ? activeCatalogScope.brands[0]
+    : '';
+  return {
+    category: dashboard.category || activeCatalogScope.category || 'shirts',
+    subcategory: dashboard.subcategory || activeCatalogScope.subcategory || 'all',
+    gender: dashboard.gender || activeCatalogScope.gender || 'all',
+    brand: dashboard.brand || catalogBrand || 'all'
+  };
+}
+
+function setActiveGenderPill(containerSelector, value = 'all') {
+  const normalized = String(value || 'all').toLowerCase();
+  document.querySelectorAll(`${containerSelector} .gender-pill, ${containerSelector} .intel-pill`).forEach(btn => {
+    const token = String(btn.dataset.gender || btn.textContent || '').trim().toLowerCase();
+    btn.classList.toggle('active', token === normalized);
+  });
+}
+
+function syncViewScopesFromDashboard() {
+  const seed = getSharedDashboardScopeSeed();
+
+  if (colorScopeFollowsDashboard) {
+    activeColorScope.category = seed.category;
+    activeColorScope.subcategory = seed.subcategory;
+    activeColorScope.gender = seed.gender;
+    activeColorScope.brands = seed.brand && seed.brand !== 'all' ? [seed.brand] : [];
+    const catSel = document.getElementById('scopeColorCategorySelect');
+    if (catSel) catSel.value = seed.category;
+    setActiveGenderPill('#scopeColorGenderPills', seed.gender);
+  }
+
+  if (dodScopeFollowsDashboard) {
+    activeDodScope.category = seed.category;
+    activeDodScope.subcategory = seed.subcategory;
+    activeDodScope.gender = seed.gender;
+    activeDodScope.brands = seed.brand && seed.brand !== 'all' ? [seed.brand] : [];
+    const catSel = document.getElementById('scopeDodCategorySelect');
+    if (catSel) catSel.value = seed.category;
+    setActiveGenderPill('#scopeDodGenderPills', seed.gender);
+  }
+
+  if (fabricScopeFollowsDashboard) {
+    activeFabricIntel.category = seed.category;
+    activeFabricIntel.gender = seed.gender;
+    activeFabricIntel.brand = seed.brand || 'all';
+    const catSel = document.getElementById('fabricCategorySelect');
+    if (catSel) catSel.value = seed.category;
+    setActiveGenderPill('#fabricGenderPills', seed.gender);
+  }
+
+  if (categoryScopeFollowsDashboard) {
+    activeCatIntel.category = seed.category;
+    activeCatIntel.gender = seed.gender;
+    const catSel = document.getElementById('catScopeCategorySelect');
+    if (catSel) catSel.value = seed.category;
+    const subSel = document.getElementById('catScopeSubcategorySelect');
+    if (subSel) subSel.value = seed.subcategory;
+    const genderSel = document.getElementById('catScopeGenderSelect');
+    if (genderSel) genderSel.value = seed.gender;
+  }
+
+  if (brandsScopeFollowsDashboard) {
+    activeScopeIntel.category = seed.category;
+    activeScopeIntel.subcategory = seed.subcategory;
+    activeScopeIntel.gender = seed.gender;
+    activeScopeIntel.brands = seed.brand && seed.brand !== 'all' ? [seed.brand] : [];
+    const catSel = document.getElementById('scopeCategorySelect');
+    if (catSel) catSel.value = seed.category;
+    const subSel = document.getElementById('scopeSubcatSelect');
+    if (subSel) subSel.value = seed.subcategory;
+    setActiveGenderPill('#scopeGenderPills', seed.gender);
+  }
+
+  if (priceScopeFollowsDashboard) {
+    const catSel = document.getElementById('priceFilterCategory');
+    if (catSel) catSel.value = seed.category;
+    const subSel = document.getElementById('priceFilterSubcategory');
+    if (subSel) subSel.value = seed.subcategory;
+    currentPriceGender = seed.gender;
+    document.querySelectorAll('#priceGenderPills .intel-pill').forEach(btn => {
+      const token = String(btn.dataset.gender || '').trim().toLowerCase();
+      btn.classList.toggle('active', token === String(seed.gender || 'all').toLowerCase());
+    });
+  }
 }
 
 function updateCTOScopeCount(count = 0) {
@@ -3667,7 +3765,7 @@ let brandSearchDebounceTimer = null;
 function buildBrandComparatorScopeParams(includeSelectedBrands = true) {
   const p = new URLSearchParams();
   p.append('category', comparatorState.category || activeScopeIntel.category || 'shirts');
-  p.append('gender', activeScopeIntel.gender || 'men');
+  p.append('gender', activeScopeIntel.gender || 'all');
 
   if (activeScopeIntel.subcategory && activeScopeIntel.subcategory !== 'all') {
     p.append('subcategory', activeScopeIntel.subcategory);
@@ -4489,7 +4587,7 @@ function closeBrandDrawer() {
 // ==========================================================================
 let activeColorScope = {
   category: 'shirts',
-  gender: 'men',
+  gender: 'all',
   subcategory: 'all',
   priceRanges: [],
   brands: []
@@ -4504,7 +4602,8 @@ let colorPriceMetricMode = 'price';
 function setColorGender(g, btn) {
   document.querySelectorAll('#scopeColorGenderPills .gender-pill').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
-  activeColorScope.gender = (g || 'men').toLowerCase();
+  colorScopeFollowsDashboard = false;
+  activeColorScope.gender = (g || 'all').toLowerCase();
   applyColorScopeFilters();
 }
 
@@ -4569,6 +4668,7 @@ async function refreshColorSidebarFacets() {
 }
 
 async function applyColorScopeFilters() {
+  colorScopeFollowsDashboard = false;
   const catSel = document.getElementById('scopeColorCategorySelect');
   if (catSel) activeColorScope.category = catSel.value;
 
@@ -4604,12 +4704,14 @@ async function resetColorScopeFilters() {
 
   activeColorScope = {
     category: 'shirts',
-    gender: 'men',
+    gender: 'all',
     subcategory: 'all',
     priceRanges: [],
     brands: []
   };
 
+  colorScopeFollowsDashboard = true;
+  syncViewScopesFromDashboard();
   loadColorIntelligence();
 }
 
@@ -4643,7 +4745,7 @@ async function loadColorIntelligence() {
     await refreshColorSidebarFacets();
     const p = new URLSearchParams();
     p.append('category', activeColorScope.category || 'shirts');
-    p.append('gender', activeColorScope.gender || 'men');
+    p.append('gender', activeColorScope.gender || 'all');
     if (activeColorScope.subcategory && activeColorScope.subcategory !== 'all') {
       p.append('subcategory', activeColorScope.subcategory);
     }
@@ -6022,7 +6124,7 @@ function selectMovementFilter(mv) {
 let activeDodScope = {
   category: 'all',
   subcategory: 'all',
-  gender: 'men',
+  gender: 'all',
   priceRanges: [],
   brands: [],
   movementType: 'all'
@@ -6094,7 +6196,8 @@ async function refreshDodSidebarFacets() {
 function setDodGender(g, btn) {
   document.querySelectorAll('#scopeDodGenderPills .gender-pill').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
-  activeDodScope.gender = (g || 'men').toLowerCase();
+  dodScopeFollowsDashboard = false;
+  activeDodScope.gender = (g || 'all').toLowerCase();
   applyDodScopeFilters();
 }
 
@@ -6106,6 +6209,7 @@ function setDodMovementPill(mv, btn) {
 }
 
 async function applyDodScopeFilters() {
+  dodScopeFollowsDashboard = false;
   const catSel = document.getElementById('scopeDodCategorySelect');
   if (catSel) activeDodScope.category = catSel.value;
 
@@ -6136,7 +6240,7 @@ async function resetDodScopeFilters() {
   if (subSel) subSel.value = 'all';
 
   document.querySelectorAll('#scopeDodGenderPills .gender-pill').forEach(b => {
-    b.classList.toggle('active', b.textContent.trim().toLowerCase() === 'men');
+    b.classList.toggle('active', b.textContent.trim().toLowerCase() === 'all');
   });
 
   document.querySelectorAll('input[name="scopeDodPrice"]').forEach(c => c.checked = false);
@@ -6145,12 +6249,14 @@ async function resetDodScopeFilters() {
   activeDodScope = {
     category: 'all',
     subcategory: 'all',
-    gender: 'men',
+    gender: 'all',
     priceRanges: [],
     brands: [],
     movementType: 'all'
   };
 
+  dodScopeFollowsDashboard = true;
+  syncViewScopesFromDashboard();
   loadDayOverDayView();
 }
 
@@ -6485,9 +6591,9 @@ async function loadSizeIntelligenceView() {
 // DYNAMIC INTELLIGENCE CONTROLLERS (CATEGORY, FABRIC, BRANDS)
 // ============================================================
 
-let activeCatIntel = { category: 'shirts', gender: 'men' };
-let activeFabricIntel = { category: 'shirts', gender: 'men', fabric: 'all', priceRanges: [], brandSizes: [], brand: 'all', sustainability: 'all' };
-let activeScopeIntel = { category: 'shirts', gender: 'men' };
+let activeCatIntel = { category: 'shirts', gender: 'all' };
+let activeFabricIntel = { category: 'shirts', gender: 'all', fabric: 'all', priceRanges: [], brandSizes: [], brand: 'all', sustainability: 'all' };
+let activeScopeIntel = { category: 'shirts', gender: 'all' };
 
 let catPriceChartInst = null;
 let catGrowthChartInst = null;
@@ -6527,6 +6633,7 @@ function selectCategoryTree(category, gender, btn) {
 
   activeCatIntel.category = category;
   activeCatIntel.gender = gender;
+  categoryScopeFollowsDashboard = false;
   updateCategoryIntelScopeCopy(category, 'all');
 
   loadCategoryIntelligence(category, gender);
@@ -6558,9 +6665,10 @@ function switchCatIntelTab(tabName, btn) {
 }
 
 function applyCatIntelFilters() {
+  categoryScopeFollowsDashboard = false;
   const category = document.getElementById('catScopeCategorySelect')?.value || activeCatIntel.category || 'shirts';
   const subcategory = document.getElementById('catScopeSubcategorySelect')?.value || 'all';
-  const gender = document.getElementById('catScopeGenderSelect')?.value || activeCatIntel.gender || 'men';
+  const gender = document.getElementById('catScopeGenderSelect')?.value || activeCatIntel.gender || 'all';
   const priceRange = document.getElementById('catScopePriceRangeSelect')?.value || 'all';
   const brandSize = document.getElementById('catScopeBrandSizeSelect')?.value || 'all';
   const brandType = document.getElementById('catScopeBrandTypeSelect')?.value || 'all';
@@ -6580,7 +6688,7 @@ function resetCatIntelFilters() {
   const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
   setVal('catScopeCategorySelect', 'shirts');
   setVal('catScopeSubcategorySelect', 'all');
-  setVal('catScopeGenderSelect', 'men');
+  setVal('catScopeGenderSelect', 'all');
   setVal('catScopePriceRangeSelect', 'all');
   setVal('catScopeBrandSizeSelect', 'all');
   setVal('catScopeBrandTypeSelect', 'all');
@@ -6588,7 +6696,9 @@ function resetCatIntelFilters() {
   setVal('catScopeFitSelect', 'all');
 
   activeCatIntel.category = 'shirts';
-  activeCatIntel.gender = 'men';
+  activeCatIntel.gender = 'all';
+  categoryScopeFollowsDashboard = true;
+  syncViewScopesFromDashboard();
 
   applyCatIntelFilters();
 }
@@ -6614,7 +6724,7 @@ async function loadCategoryIntelligence(category = activeCatIntel.category, gend
   const fabric = filters.fabric || document.getElementById('catScopeFabricSelect')?.value || 'all';
   const fit = filters.fit || document.getElementById('catScopeFitSelect')?.value || 'all';
 
-  const cacheKey = `${(category || 'shirts').toLowerCase()}_${(gender || 'men').toLowerCase()}_${subcategory}_${priceRange}_${brandSize}_${brandType}_${fabric}_${fit}`;
+  const cacheKey = `${(category || 'shirts').toLowerCase()}_${(gender || 'all').toLowerCase()}_${subcategory}_${priceRange}_${brandSize}_${brandType}_${fabric}_${fit}`;
   if (catIntelClientCache.has(cacheKey)) {
     renderCategoryIntelData(catIntelClientCache.get(cacheKey));
   }
@@ -6940,6 +7050,7 @@ function switchFabricSubNav(navName, btn) {
 function setFabricGender(g, btn) {
   document.querySelectorAll('#fabricGenderPills .gender-pill').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
+  fabricScopeFollowsDashboard = false;
   activeFabricIntel.gender = g;
   applyFabricFilters();
 }
@@ -6996,6 +7107,7 @@ async function refreshFabricSidebarFacets() {
 }
 
 async function applyFabricFilters() {
+  fabricScopeFollowsDashboard = false;
   const catSel = document.getElementById('fabricCategorySelect');
   if (catSel) activeFabricIntel.category = catSel.value;
   const brandSel = document.getElementById('fabricBrandSelect');
@@ -7027,8 +7139,10 @@ async function resetFabricFilters() {
   if (sustainSel) sustainSel.value = 'all';
   document.querySelectorAll('input[name="fabricPriceRange"]').forEach(c => c.checked = false);
   document.querySelectorAll('input[name="fabricBrandSize"]').forEach(c => c.checked = false);
-  activeFabricIntel = { category: 'shirts', gender: 'men', fabric: 'all', priceRanges: [], brandSizes: [], brand: 'all', sustainability: 'all' };
-  document.querySelectorAll('#fabricGenderPills .gender-pill').forEach((b, i) => b.classList.toggle('active', i === 0));
+  activeFabricIntel = { category: 'shirts', gender: 'all', fabric: 'all', priceRanges: [], brandSizes: [], brand: 'all', sustainability: 'all' };
+  fabricScopeFollowsDashboard = true;
+  syncViewScopesFromDashboard();
+  document.querySelectorAll('#fabricGenderPills .gender-pill').forEach(b => b.classList.toggle('active', b.textContent.trim().toLowerCase() === 'all'));
   loadFabricIntelligence();
 }
 
@@ -7356,7 +7470,7 @@ function renderFabricSidebarFromPayload(sidebarCounts) {
 
 activeScopeIntel = {
   category: 'shirts',
-  gender: 'men',
+  gender: 'all',
   subcategory: 'all',
   priceRanges: [],
   brandSizes: [],
@@ -7385,11 +7499,13 @@ function toggleScopeAcc(accId) {
 function setScopeGender(g, btn) {
   document.querySelectorAll('#scopeGenderPills .gender-pill').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
-  activeScopeIntel.gender = (g || 'men').toLowerCase();
+  brandsScopeFollowsDashboard = false;
+  activeScopeIntel.gender = (g || 'all').toLowerCase();
   applyBrandsScopeFilters();
 }
 
 function applyBrandsScopeFilters() {
+  brandsScopeFollowsDashboard = false;
   const catSel = document.getElementById('scopeCategorySelect');
   if (catSel) activeScopeIntel.category = catSel.value;
 
@@ -7450,7 +7566,8 @@ function resetBrandsScopeFilters() {
   const subSel = document.getElementById('scopeSubcatSelect');
   if (subSel) subSel.value = 'all';
 
-  document.querySelectorAll('#scopeGenderPills .gender-pill').forEach((b, i) => b.classList.toggle('active', i === 0));
+  document.querySelectorAll('#scopeGenderPills .gender-pill').forEach(b => b.classList.toggle('active', b.textContent.trim().toLowerCase() === 'all'));
+  
 
   document.querySelectorAll('input[name="scopePriceRange"]').forEach(c => c.checked = false);
   document.querySelectorAll('input[name="scopeBrandSize"]').forEach(c => c.checked = false);
@@ -7474,7 +7591,7 @@ function resetBrandsScopeFilters() {
 
   activeScopeIntel = {
     category: 'shirts',
-    gender: 'men',
+    gender: 'all',
     subcategory: 'all',
     priceRanges: [],
     brandSizes: [],
@@ -7487,7 +7604,8 @@ function resetBrandsScopeFilters() {
     ratingMin: 0,
     newArrivalsOnly: false
   };
-
+  brandsScopeFollowsDashboard = true;
+  syncViewScopesFromDashboard();
   loadBrandsScopeIntelligence();
 }
 
@@ -7561,7 +7679,7 @@ async function loadBrandsScopeIntelligence() {
   const requestSeq = ++brandsScopeRequestSeq;
   const p = new URLSearchParams();
   p.append('category', activeScopeIntel.category || 'shirts');
-  p.append('gender', activeScopeIntel.gender || 'men');
+  p.append('gender', activeScopeIntel.gender || 'all');
   if (activeScopeIntel.subcategory && activeScopeIntel.subcategory !== 'all') {
     p.append('subcategory', activeScopeIntel.subcategory);
   }
@@ -7908,7 +8026,7 @@ function renderBrandsScopeData(data) {
 let priceDistChartInst = null;
 let priceTrendChartInst = null;
 let pricePositioningChartInst = null;
-let currentPriceGender = 'men';
+let currentPriceGender = 'all';
 
 function getPriceBrandCheckboxes() {
   return Array.from(document.querySelectorAll('#priceBrandChecklist input[type="checkbox"]'))
@@ -7947,6 +8065,7 @@ function onPriceBrandCheckboxChange(input) {
 function setPriceGender(btn, gender) {
   document.querySelectorAll('#priceGenderPills .intel-pill').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
+  priceScopeFollowsDashboard = false;
   currentPriceGender = gender;
   applyPriceIntelFilters();
 }
@@ -7980,9 +8099,11 @@ function resetPriceIntelFilters() {
   if (availSel) availSel.value = 'all';
 
   document.querySelectorAll('#priceGenderPills .intel-pill').forEach(b => {
-    b.classList.toggle('active', b.dataset.gender === 'men');
+    b.classList.toggle('active', b.dataset.gender === 'all');
   });
-  currentPriceGender = 'men';
+  currentPriceGender = 'all';
+  priceScopeFollowsDashboard = true;
+  syncViewScopesFromDashboard();
 
   document.querySelectorAll('.price-range-chk').forEach(c => {
     c.checked = false;
@@ -7998,6 +8119,7 @@ function resetPriceIntelFilters() {
 }
 
 function applyPriceIntelFilters() {
+  priceScopeFollowsDashboard = false;
   loadPriceIntelligence();
 }
 
@@ -8006,7 +8128,7 @@ async function loadPriceIntelligence() {
     const requestSeq = ++priceIntelRequestSeq;
     const category = document.getElementById('priceFilterCategory')?.value || 'shirts';
     const subcategory = document.getElementById('priceFilterSubcategory')?.value || 'all';
-    const gender = currentPriceGender || 'men';
+    const gender = currentPriceGender || 'all';
     const fabric = document.getElementById('priceFilterFabric')?.value || 'all';
     const color = document.getElementById('priceFilterColor')?.value || 'all';
     const discount = document.getElementById('priceFilterDiscount')?.value || 'all';
