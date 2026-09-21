@@ -1525,7 +1525,7 @@ def get_insights():
         for r in top_brands_rows
     ]
 
-    # 8. Discount and premium leaders are inferred from the sampled catalog rows below.
+    # 8. Discount and premium leaders are computed from live scoped catalog rows.
     top_disc_row = None
     prem_row = None
 
@@ -1557,74 +1557,106 @@ def get_insights():
         "top_brands_valuation": top_brands_val
     }
 
-    # 9-13. Fabric, Colors, Top3 and BrandMatrix
-    # Ultra-fast single-scan sampling (up to 4,000 rows):
-    # Instead of running 10 separate sequential full-table scans (which took up to 160s on 6GB DB),
-    # we stream 4,000 representative rows in 0.08s and aggregate all dimensions simultaneously in Python memory!
+    # 9. Lightweight pricing sample retained only as a fallback for very broad scopes.
     sample_limit = _get_adaptive_sample_limit(total_products, ceiling=2500)
     cur.execute(f"""
-        SELECT 
-            fit, fabric, pattern, primary_color, color_hex, brand, sub_category,
-            selling_price, mrp, discount_percentage, is_in_stock,
-            product_id, title, average_rating, total_ratings_count, product_url
+        SELECT
+            p.selling_price
         FROM products p
         WHERE {where_sql}
+          AND p.selling_price > 0
         LIMIT ?;
     """, where_params + [sample_limit])
     sample_rows = cur.fetchall()
+    sample_prices = [_safe_float(row[0]) for row in sample_rows if _safe_float(row[0]) > 0]
 
-    fab_counts = Counter()
-    fab_prices = defaultdict(list)
-    fab_discs = defaultdict(list)
+    # 10. Exact top fabrics for the scoped catalog.
+    cur.execute(f"""
+        SELECT
+            CASE
+                WHEN LOWER(p.fabric) LIKE '%cotton%' AND (LOWER(p.fabric) LIKE '%blend%' OR LOWER(p.fabric) LIKE '%poly%' OR LOWER(p.fabric) LIKE '%,%') THEN 'Cotton Blend'
+                WHEN LOWER(p.fabric) LIKE '%cotton%' THEN 'Cotton'
+                WHEN LOWER(p.fabric) LIKE '%poly%' THEN 'Polyester'
+                WHEN LOWER(p.fabric) LIKE '%linen%' THEN 'Linen'
+                WHEN LOWER(p.fabric) LIKE '%viscose%' THEN 'Viscose'
+                WHEN LOWER(p.fabric) LIKE '%denim%' THEN 'Denim'
+                ELSE 'Others'
+            END AS clean_fabric,
+            COUNT(*) AS cnt,
+            ROUND(AVG(COALESCE(p.selling_price, 0)), 1) AS avg_price,
+            ROUND(AVG(COALESCE(p.discount_percentage, 0)), 1) AS avg_discount
+        FROM products p
+        WHERE {where_sql}
+          AND p.fabric IS NOT NULL
+          AND p.fabric != ''
+        GROUP BY clean_fabric
+        ORDER BY cnt DESC, clean_fabric ASC
+        LIMIT 5;
+    """, where_params)
+    fabric_rows = cur.fetchall()
 
-    col_counts = Counter()
-    col_hexes = {}
-    col_discs = defaultdict(list)
+    # 11. Exact top colors for the scoped catalog.
+    cur.execute(f"""
+        SELECT
+            p.primary_color,
+            p.color_hex,
+            COUNT(*) AS cnt,
+            ROUND(AVG(COALESCE(p.discount_percentage, 0)), 1) AS avg_discount
+        FROM products p
+        WHERE {where_sql}
+          AND {_valid_color_sql("p.primary_color")}
+        GROUP BY p.primary_color, p.color_hex
+        ORDER BY cnt DESC, p.primary_color ASC
+        LIMIT 6;
+    """, where_params)
+    color_rows = cur.fetchall()
 
-    brand_counts = Counter()
-    brand_prices = defaultdict(list)
-    sample_prices = []
+    # 12. Exact discount and premium signals.
+    cur.execute(f"""
+        SELECT p.brand, COALESCE(p.discount_percentage, 0) AS discount_pct, COALESCE(p.selling_price, 0) AS selling_price, p.title
+        FROM products p
+        WHERE {where_sql}
+          AND p.brand IS NOT NULL
+          AND p.brand != ''
+          AND COALESCE(p.is_in_stock, 0) = 1
+        ORDER BY COALESCE(p.discount_percentage, 0) DESC,
+                 COALESCE(p.selling_price, 0) DESC,
+                 p.product_id DESC
+        LIMIT 1;
+    """, where_params)
+    disc_signal = cur.fetchone()
+    if disc_signal:
+        top_disc_row = (
+            disc_signal["brand"],
+            _safe_float(disc_signal["discount_pct"]),
+            _safe_float(disc_signal["selling_price"]),
+            disc_signal["title"]
+        )
 
-    top_rated_candidates = []
-    max_disc_row = None
-    max_prem_row = None
+    cur.execute(f"""
+        SELECT
+            p.brand,
+            COUNT(*) AS sku_count,
+            ROUND(AVG(COALESCE(p.selling_price, 0)), 1) AS mean_price,
+            ROUND(AVG(COALESCE(p.mrp, 0)), 1) AS mean_mrp
+        FROM products p
+        WHERE {where_sql}
+          AND p.brand IS NOT NULL
+          AND p.brand != ''
+        GROUP BY p.brand
+        ORDER BY sku_count DESC
+        LIMIT 25;
+    """, where_params)
+    brand_matrix_rows = cur.fetchall()
+    premium_brand_row = max(brand_matrix_rows, key=lambda row: _safe_float(row["mean_price"])) if brand_matrix_rows else None
+    if premium_brand_row:
+        prem_row = (
+            premium_brand_row["brand"],
+            _safe_float(premium_brand_row["mean_price"]),
+            None
+        )
 
-    for r in sample_rows:
-        s_fit, s_fab, s_pat, s_col, s_chex, s_b, s_sub, s_sp, s_mrp, s_disc, s_instock, s_pid, s_title, s_rate, s_rcnt, s_url = r
-        sp = s_sp or 0
-        disc = s_disc or 0
-        if s_fab:
-            fab_counts[s_fab] += 1
-            if sp: fab_prices[s_fab].append(sp)
-            if disc: fab_discs[s_fab].append(disc)
-        s_col = _normalize_color_name(s_col, fallback=None)
-        s_chex = _normalize_color_hex(s_chex, s_col) if s_col else None
-        if s_col:
-            col_counts[s_col] += 1
-            if s_chex and s_col not in col_hexes:
-                col_hexes[s_col] = s_chex
-            if disc: col_discs[s_col].append(disc)
-        if s_b:
-            brand_counts[s_b] += 1
-            if sp: brand_prices[s_b].append(sp)
-        if sp:
-            sample_prices.append(sp)
-        if s_instock:
-            if max_disc_row is None or disc > (max_disc_row[1] or 0):
-                max_disc_row = (s_b, disc, sp, s_title)
-            if max_prem_row is None or sp > (max_prem_row[1] or 0):
-                max_prem_row = (s_b, sp, s_title)
-
-    fabric_rows = [
-        (f, cnt, round(sum(fab_prices[f])/len(fab_prices[f]), 1) if fab_prices[f] else avg_price,
-                 round(sum(fab_discs[f])/len(fab_discs[f]), 1) if fab_discs[f] else avg_discount_val)
-        for f, cnt in fab_counts.most_common(5)
-    ]
-    col_rows = [
-        (c, col_hexes.get(c, '#0f172a'), cnt,
-         round(sum(col_discs[c])/len(col_discs[c]), 1) if col_discs[c] else avg_discount_val)
-        for c, cnt in col_counts.most_common(6)
-    ]
+    # 13. Exact best-seller candidates.
     cur.execute(f"""
         SELECT
             p.product_id,
@@ -1693,22 +1725,6 @@ def get_insights():
             cur.execute(f"SELECT product_id, full_data_json FROM products WHERE product_id IN ({placeholders});", p3_ids)
             for img_row in cur.fetchall():
                 p3_image_map[int(img_row[0])] = _load_primary_image(img_row[1])
-    cur.execute(f"""
-        SELECT
-            p.brand,
-            COUNT(*) as sku_count,
-            ROUND(AVG(p.selling_price), 1) as mean_price,
-            ROUND(AVG(p.mrp), 1) as mean_mrp
-        FROM products p
-        WHERE {where_sql} AND p.brand IS NOT NULL AND p.brand != ''
-        GROUP BY p.brand
-        ORDER BY sku_count DESC
-        LIMIT 25;
-    """, where_params)
-    brand_matrix_rows = cur.fetchall()
-    top_disc_row = max_disc_row
-    prem_row = max_prem_row
-
     deepest_brand = top_disc_row[0] if top_disc_row else (top_brands[0]["brand"] if top_brands else "Brand")
     deepest_disc = round(top_disc_row[1] or 0) if top_disc_row else round(avg_discount_val or 0)
     prem_brand = prem_row[0] if prem_row else (top_brands[0]["brand"] if top_brands else "Flagship")
@@ -1734,50 +1750,11 @@ def get_insights():
         for b in top_brands[:5]
     ]
 
-    # Geographic demand derived from category_comparison (already computed, no extra query)
-    sh_cnt = category_comparison.get("Shirts", {}).get("count", total_products // 3)
-    dn_cnt = category_comparison.get("Denims", {}).get("count", total_products // 4)
-    wt_cnt = category_comparison.get("Western Wear", {}).get("count", total_products // 4)
-    cur_asp = avg_price
-
-    # Geographic fulfillment demand — derived from already-computed category_comparison (no extra query!)
-    # Map category volumes to regional fashion demand centers
-    sh_vol = category_comparison.get("Shirts", {}).get("count", 0)
-    dn_vol = category_comparison.get("Denims", {}).get("count", 0)
-    ww_vol = category_comparison.get("Western Wear", {}).get("count", 0)
-    oth_vol = max(0, total_products - sh_vol - dn_vol - ww_vol)
-    total_vol = max(1, total_products)
-    blr_pct = round((sh_vol / total_vol) * 100, 1)  # Bengaluru — shirts/tops hub
-    del_pct = round((dn_vol / total_vol) * 100, 1)  # Delhi — denims hub
-    bom_pct = round((ww_vol / total_vol) * 100, 1)  # Mumbai — western wear hub
-    rem_pct = round((oth_vol / total_vol) * 100, 1)
-    hyd_pct = round(max(0.0, 100.0 - blr_pct - del_pct - bom_pct - rem_pct / 2), 1)
-
-    geo_candidates = [
-        {"city": "Bengaluru Hub", "share": blr_pct},
-        {"city": "Delhi NCR Hub", "share": del_pct},
-        {"city": "Mumbai Hub", "share": bom_pct},
-        {"city": "Hyderabad Hub", "share": hyd_pct},
-        {"city": "Chennai Hub", "share": rem_pct}
-    ]
-    geo_candidates.sort(key=lambda x: x["share"], reverse=True)
-    for idx, item in enumerate(geo_candidates, 1):
-        item["rank"] = idx
-    geographic_demand = geo_candidates
+    # Geographic demand should not be inferred from category mix. Until a real regional source is loaded,
+    # return an empty state instead of fabricated hub allocations.
+    geographic_demand = []
 
     trending_brands = _get_trending_brands(cur, where_sql, where_params, limit=5)
-    if not trending_brands:
-        trending_brands = [
-            {
-                "brand": b["brand"],
-                "growth": 0.0,
-                "direction": "+",
-                "skus": b["product_count"],
-                "units_sold": 0,
-                "revenue": round(b["product_count"] * b["avg_price"], 2)
-            }
-            for b in top_brands[:5]
-        ]
 
     # Dynamic AI Market Insights — derived from sampled winners and category mix
     # Derive category from filter or category_comparison
@@ -1791,7 +1768,7 @@ def get_insights():
     lead_cat_cnt = lead_cat_data[1].get("count", total_products)
     lead_cat_asp = round(lead_cat_data[1].get("avg_price", avg_price))
 
-    prem_candidate = min(top_brands, key=lambda b: b.get("avg_discount", 100)) if top_brands else None
+    prem_candidate = max(top_brands, key=lambda b: b.get("avg_price", 0)) if top_brands else None
     prem_brand = prem_brand if prem_brand else (prem_candidate["brand"] if prem_candidate else "Flagship")
     prem_disc = round(prem_candidate["avg_discount"]) if prem_candidate else round(avg_discount_val or 0)
     prem_asp = prem_asp if prem_asp else round(prem_candidate["avg_price"]) if prem_candidate else avg_price
@@ -1800,20 +1777,24 @@ def get_insights():
 
     # Top Fabrics — derived from parallel fabric_rows (no extra query!)
     top_fabrics = [
-        {"fabric": r[0], "count": r[1], "percentage": round((r[1] / max(1, total_products)) * 100, 1)}
+        {
+            "fabric": r["clean_fabric"],
+            "count": int(r["cnt"] or 0),
+            "percentage": round((int(r["cnt"] or 0) / max(1, total_products)) * 100, 1)
+        }
         for r in fabric_rows
     ]
 
     # Top Colors — derived from parallel col_rows (no extra query!)
     top_colors = [
         {
-            "color": _normalize_color_name(r[0], fallback="Multicolor"),
-            "hex": _normalize_color_hex(r[1], r[0], fallback="#0f172a"),
-            "count": r[2],
-            "discount": round(r[3] or 0, 1),
-            "percentage": round((r[2] / max(1, total_products)) * 100, 1)
+            "color": _normalize_color_name(r["primary_color"], fallback="Multicolor"),
+            "hex": _normalize_color_hex(r["color_hex"], r["primary_color"], fallback="#0f172a"),
+            "count": int(r["cnt"] or 0),
+            "discount": round(r["avg_discount"] or 0, 1),
+            "percentage": round((int(r["cnt"] or 0) / max(1, total_products)) * 100, 1)
         }
-        for r in col_rows
+        for r in color_rows
     ]
 
     # Top 3 Products — derived from parallel p3_rows (no extra query!)
@@ -1964,18 +1945,64 @@ def get_insights():
         "small_brands": {"count": small_cnt, "products": small_prods, "share": round((small_prods / total_scale_prods) * 100, 1)}
     }
 
-    # Brand Valuation & Revenue Matrix — from parallel brand_matrix_rows (no extra query!)
+    # Brand Valuation & Revenue Matrix — exact inventory snapshot + recent sales telemetry.
+    latest_sales_date = _latest_sales_date(cur)
+    sales_30d_start_date = latest_sales_date - timedelta(days=29) if latest_sales_date else None
+    brand_names_for_matrix = [row["brand"] for row in brand_matrix_rows if row["brand"]]
+    stock_units_by_brand = {}
+    stock_value_by_brand = {}
+    units_sold_by_brand = {}
+    revenue_by_brand = {}
+
+    if brand_names_for_matrix:
+        brand_placeholders = ",".join("?" for _ in brand_names_for_matrix)
+
+        if latest_snapshot_date:
+            cur.execute(f"""
+                SELECT
+                    p.brand,
+                    COALESCE(SUM(s.total_stock), 0) AS stock_units,
+                    COALESCE(SUM(s.total_stock * COALESCE(s.selling_price, p.selling_price, 0)), 0) AS stock_value
+                FROM daily_inventory_snapshots s
+                JOIN products p ON p.product_id = s.product_id
+                WHERE s.snapshot_date = ?
+                  AND p.brand IN ({brand_placeholders})
+                  AND {where_sql}
+                GROUP BY p.brand;
+            """, [latest_snapshot_date] + brand_names_for_matrix + where_params)
+            for row in cur.fetchall():
+                stock_units_by_brand[row["brand"]] = int(row["stock_units"] or 0)
+                stock_value_by_brand[row["brand"]] = round(_safe_float(row["stock_value"]), 2)
+
+        if latest_sales_date and sales_30d_start_date:
+            cur.execute(f"""
+                SELECT
+                    p.brand,
+                    COALESCE(SUM(sa.units_sold), 0) AS units_sold,
+                    COALESCE(SUM(sa.revenue_generated), 0) AS revenue
+                FROM daily_sales_analytics sa
+                JOIN products p ON p.product_id = sa.product_id
+                WHERE sa.analytics_date >= ?
+                  AND sa.analytics_date <= ?
+                  AND p.brand IN ({brand_placeholders})
+                  AND {where_sql}
+                GROUP BY p.brand;
+            """, [sales_30d_start_date, latest_sales_date] + brand_names_for_matrix + where_params)
+            for row in cur.fetchall():
+                units_sold_by_brand[row["brand"]] = int(row["units_sold"] or 0)
+                revenue_by_brand[row["brand"]] = round(_safe_float(row["revenue"]), 2)
+
     matrix_rows = brand_matrix_rows
     brand_valuation_matrix = []
     for r in matrix_rows:
-        b_name = r[0]
-        b_skus = int(r[1] or 0)
-        b_mean_price = float(r[2] or 0.0)
-        b_mean_mrp = float(r[3] or 0.0)
-        b_total_units = int(total_warehouse_units * (b_skus / max(1, total_products)))
-        b_sales_units = 0
-        b_revenue = round(b_skus * b_mean_price, 2)
-        b_valuation = round(b_total_units * b_mean_price, 2)
+        b_name = r["brand"]
+        b_skus = int(r["sku_count"] or 0)
+        b_mean_price = float(r["mean_price"] or 0.0)
+        b_mean_mrp = float(r["mean_mrp"] or 0.0)
+        b_total_units = stock_units_by_brand.get(b_name, 0)
+        b_sales_units = units_sold_by_brand.get(b_name, 0)
+        b_revenue = revenue_by_brand.get(b_name, 0.0)
+        b_valuation = stock_value_by_brand.get(b_name, round(b_total_units * b_mean_price, 2))
 
         if b_skus >= LARGE_BRAND_MIN_PRODUCTS:
             scale_tier = "Largest Brand"
@@ -2043,6 +2070,7 @@ def get_insights():
         "inventory_heatmap_columns": heatmap_columns,
         "inventory_heatmap": heatmap_matrix,
         "geographic_demand": geographic_demand,
+        "geographic_demand_available": False,
         "trending_brands": trending_brands,
         "ai_market_insights": ai_market_insights,
         "category_comparison": category_comparison,

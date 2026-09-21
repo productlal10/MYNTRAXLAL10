@@ -1536,7 +1536,7 @@ function renderGeographicDemand(insights) {
   const hubs = Array.isArray(insights.geographic_demand) ? insights.geographic_demand.slice(0, 5) : [];
 
   if (hubs.length === 0) {
-    listEl.innerHTML = '<div style="padding:12px;color:#94a3b8;font-size:12px;text-align:center;">No geographic demand data available.</div>';
+    listEl.innerHTML = '<div style="padding:12px;color:#94a3b8;font-size:12px;text-align:center;">Regional demand data is not connected yet, so this widget is intentionally hidden from inference.</div>';
     return;
   }
 
@@ -1556,15 +1556,10 @@ function renderTrendingBrands(insights) {
   const listEl = document.getElementById('trendingBrandsList');
   if (!listEl) return;
 
-  const brands = (Array.isArray(insights.trending_brands) && insights.trending_brands.length > 0)
-    ? insights.trending_brands.slice(0, 5)
-    : (Array.isArray(insights.top_brands) ? insights.top_brands.slice(0, 5) : []).map(b => ({
-        brand: b.brand,
-        skus: Number(b.product_count || 0)
-      }));
+  const brands = Array.isArray(insights.trending_brands) ? insights.trending_brands.slice(0, 5) : [];
 
   if (!brands.length) {
-    listEl.innerHTML = '<div style="padding:12px;color:#94a3b8;font-size:12px;text-align:center;">No brand trend data available.</div>';
+    listEl.innerHTML = '<div style="padding:12px;color:#94a3b8;font-size:12px;text-align:center;">No recent sales trend data is available for this scope yet.</div>';
     return;
   }
 
@@ -1701,7 +1696,7 @@ function renderDashboardTop3Products(insights) {
 
   const products = insights.top_3_products || [];
   if (products.length === 0) {
-    container.innerHTML = '<div style="text-align:center; padding:16px; color:#94a3b8; font-size:12px;">Loading best-seller products...</div>';
+    container.innerHTML = '<div style="text-align:center; padding:16px; color:#94a3b8; font-size:12px;">No qualifying best-seller products were found for the current scope.</div>';
     return;
   }
 
