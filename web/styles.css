@@ -6390,6 +6390,15 @@ input:checked + .slider:before {
   color: #64748b;
 }
 
+.cto-brand-dropdown-section-label {
+  padding: 10px 12px 6px;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
 .cto-filter-footer {
   display: flex;
   justify-content: space-between;

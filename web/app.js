@@ -1043,7 +1043,7 @@ function applyCTOBrandOptions(selectedValue = 'all') {
   const allBrands = _ctoFacetState.brands || [];
   let visibleBrands = searchTerm
     ? allBrands.filter(b => b.value.toLowerCase().includes(searchTerm))
-    : allBrands.slice(0, MAX_CTO_BRAND_OPTIONS_WITHOUT_SEARCH);
+    : [];
 
   const selectedBrand = selectedValue && selectedValue !== 'all'
     ? allBrands.find(b => b.value.toLowerCase() === String(selectedValue).toLowerCase())
@@ -1058,11 +1058,11 @@ function applyCTOBrandOptions(selectedValue = 'all') {
     html += `<option value="${escapeHtml(b.value)}" ${isSel}>${escapeHtml(b.value)} (${b.count.toLocaleString()})</option>`;
   });
 
-  if (!searchTerm && allBrands.length > visibleBrands.length) {
-    html += `<option value="" disabled>Showing first ${visibleBrands.length.toLocaleString()} brands. Type to search ${allBrands.length.toLocaleString()} total brands.</option>`;
+  if (!searchTerm) {
+    html += `<option value="" disabled>Type to search ${allBrands.length.toLocaleString()} brands in the current scope.</option>`;
   }
 
-  if (visibleBrands.length === 0) {
+  if (searchTerm && visibleBrands.length === 0) {
     html += '<option value="" disabled>No brands match this search</option>';
   }
 
@@ -1079,7 +1079,7 @@ function applyCTOBrandOptions(selectedValue = 'all') {
   if (metaEl) {
     metaEl.textContent = rawSearchTerm
       ? `${visibleBrands.length.toLocaleString()} match${visibleBrands.length === 1 ? '' : 'es'}`
-      : `${allBrands.length.toLocaleString()} in scope`;
+      : `All brands in scope`;
   }
   if (inputEl && exactMatch && rawSearchTerm !== exactMatch.value) {
     inputEl.value = exactMatch.value;
@@ -1117,7 +1117,22 @@ function renderCTOBrandDropdownList(visibleBrands, selectedValue = 'all', { tota
     </button>
   `;
 
-  if (!visibleBrands.length) {
+  if (!searchTerm && normalizedSelected !== 'all') {
+    const pinnedBrand = visibleBrands.find(brand => brand.value.toLowerCase() === normalizedSelected);
+    if (pinnedBrand) {
+      html += `
+        <div class="cto-brand-dropdown-section-label">Current selection</div>
+        <button type="button" class="cto-brand-option active" data-brand="${escapeHtml(pinnedBrand.value)}" onclick="selectCTOBrandOption(this.dataset.brand)">
+          <span class="cto-brand-option-name">${escapeHtml(pinnedBrand.value)}</span>
+          <span class="cto-brand-option-count">${pinnedBrand.count.toLocaleString()}</span>
+        </button>
+      `;
+    }
+  }
+
+  if (!searchTerm) {
+    html += `<div class="cto-brand-dropdown-note">Start typing to search ${totalBrands.toLocaleString()} dynamic brands in the current scope.</div>`;
+  } else if (!visibleBrands.length) {
     html += `<div class="cto-brand-empty-state">No brands match "${escapeHtml(searchTerm)}".</div>`;
   } else {
     html += visibleBrands.map(brand => {
@@ -1129,10 +1144,6 @@ function renderCTOBrandDropdownList(visibleBrands, selectedValue = 'all', { tota
         </button>
       `;
     }).join('');
-  }
-
-  if (!searchTerm && totalBrands > visibleBrands.length) {
-    html += `<div class="cto-brand-dropdown-note">Showing first ${visibleBrands.length.toLocaleString()} brands. Start typing to narrow the list.</div>`;
   }
 
   listEl.innerHTML = html;
