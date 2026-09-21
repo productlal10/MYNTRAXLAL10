@@ -583,6 +583,27 @@ def _get_brand_inventory_breakdown(cur, where_sql: str, params, brands):
     inventory_units = {brand: 0 for brand in unique_brands}
     size_totals = Counter()
 
+    latest_snapshot_date = _get_latest_inventory_snapshot_date(cur)
+    if latest_snapshot_date:
+        cur.execute(f"""
+            WITH filtered_products AS MATERIALIZED (
+                SELECT p.product_id, p.brand
+                FROM products p
+                WHERE {where_sql} AND p.brand IN ({placeholders})
+            )
+            SELECT
+                fp.brand,
+                COALESCE(SUM(s.total_stock), 0) as units
+            FROM daily_inventory_snapshots s
+            JOIN filtered_products fp ON fp.product_id = s.product_id
+            WHERE s.snapshot_date = ?
+            GROUP BY fp.brand;
+        """, query_params + [latest_snapshot_date])
+        for row in cur.fetchall():
+            brand = row["brand"]
+            if brand:
+                inventory_units[brand] = int(row["units"] or 0)
+
     cur.execute(f"""
         SELECT
             p.brand,
@@ -599,7 +620,8 @@ def _get_brand_inventory_breakdown(cur, where_sql: str, params, brands):
         units = int(row["units"] or 0)
         if not brand or units <= 0:
             continue
-        inventory_units[brand] = inventory_units.get(brand, 0) + units
+        if not latest_snapshot_date:
+            inventory_units[brand] = inventory_units.get(brand, 0) + units
         if not size_label:
             continue
         exact_size_breakdown.setdefault(brand, defaultdict(int))
@@ -662,6 +684,51 @@ def _get_trending_brands(cur, where_sql: str, params, limit: int = 5):
             "revenue": round(float(row["latest_revenue"] or 0.0), 2)
         })
     return trending
+
+
+def _use_exact_overview_pricing(total_products: int, filters: dict) -> bool:
+    if total_products <= 50000:
+        return True
+    restrictive_tokens = [
+        filters.get("category"),
+        filters.get("gender"),
+        filters.get("subcategory"),
+        filters.get("brand"),
+        filters.get("brand_type"),
+        filters.get("brand_scale"),
+        filters.get("price_min"),
+        filters.get("price_max"),
+    ]
+    return any(token and token != "all" for token in restrictive_tokens)
+
+
+def _approximate_pricing_shape_from_brackets(avg_price: float, price_brackets: dict):
+    weighted_points = [
+        (250, int(price_brackets.get("under_500") or 0)),
+        (750, int(price_brackets.get("500_to_1000") or 0)),
+        (1500, int(price_brackets.get("1000_to_2000") or 0)),
+        (2750, int(price_brackets.get("2000_to_3500") or 0)),
+        (4500, int(price_brackets.get("above_3500") or 0)),
+    ]
+    total_weight = sum(weight for _, weight in weighted_points)
+    if total_weight <= 0:
+        fallback = float(avg_price or 0.0)
+        return fallback, fallback, fallback, int(round(fallback))
+
+    def percentile_point(target_fraction: float) -> float:
+        threshold = total_weight * target_fraction
+        running = 0
+        for price_point, weight in weighted_points:
+            running += weight
+            if running >= threshold:
+                return float(price_point)
+        return float(weighted_points[-1][0])
+
+    median_price = percentile_point(0.50)
+    p25_price = percentile_point(0.25)
+    p75_price = percentile_point(0.75)
+    mode_price = max(weighted_points, key=lambda item: item[1])[0]
+    return median_price, p25_price, p75_price, int(mode_price)
 
 
 def _subcategory_facets(cur, where_sql: str, params, category: str):
@@ -1390,6 +1457,7 @@ def get_insights():
     avg_discount_val = round(combined[4] or 0, 1)
 
     inventory_totals = _get_inventory_snapshot_totals(cur, where_sql, where_params)
+    latest_snapshot_date = inventory_totals["snapshot_date"]
     total_warehouse_units = _get_scoped_inventory_units(cur, where_sql, where_params)
     if total_warehouse_units <= 0:
         total_warehouse_units = inventory_totals["total_units"]
@@ -1449,17 +1517,35 @@ def get_insights():
     western_disc = round(combined[29] or avg_discount_val, 1)
     others_real_cnt = max(0, total_products - shirts_real_cnt - denims_real_cnt - western_real_cnt)
 
-    cur.execute(f"""
-        SELECT
-            COALESCE(SUM(CASE WHEN p.category = 'Shirts' AND s.available = 1 THEN s.inventory_count ELSE 0 END), 0) as shirts_units,
-            COALESCE(SUM(CASE WHEN p.category = 'Jeans' AND s.available = 1 THEN s.inventory_count ELSE 0 END), 0) as denims_units,
-            COALESCE(SUM(CASE WHEN p.category IN ('Western Wear', 'Dresses', 'Tops', 'Skirts', 'Jumpsuit', 'Jumpsuits') AND s.available = 1 THEN s.inventory_count ELSE 0 END), 0) as western_units,
-            COALESCE(SUM(CASE WHEN p.category NOT IN ('Shirts', 'Jeans', 'Western Wear', 'Dresses', 'Tops', 'Skirts', 'Jumpsuit', 'Jumpsuits') AND s.available = 1 THEN s.inventory_count ELSE 0 END), 0) as others_units
-        FROM products p
-        LEFT JOIN product_sizes s ON s.product_id = p.product_id
-        WHERE {where_sql};
-    """, where_params)
-    category_units_row = cur.fetchone() or {}
+    if latest_snapshot_date:
+        cur.execute(f"""
+            WITH filtered_products AS MATERIALIZED (
+                SELECT p.product_id, p.category
+                FROM products p
+                WHERE {where_sql}
+            )
+            SELECT
+                COALESCE(SUM(CASE WHEN fp.category = 'Shirts' THEN s.total_stock ELSE 0 END), 0) as shirts_units,
+                COALESCE(SUM(CASE WHEN fp.category = 'Jeans' THEN s.total_stock ELSE 0 END), 0) as denims_units,
+                COALESCE(SUM(CASE WHEN fp.category IN ('Western Wear', 'Dresses', 'Tops', 'Skirts', 'Jumpsuit', 'Jumpsuits') THEN s.total_stock ELSE 0 END), 0) as western_units,
+                COALESCE(SUM(CASE WHEN fp.category NOT IN ('Shirts', 'Jeans', 'Western Wear', 'Dresses', 'Tops', 'Skirts', 'Jumpsuit', 'Jumpsuits') THEN s.total_stock ELSE 0 END), 0) as others_units
+            FROM daily_inventory_snapshots s
+            JOIN filtered_products fp ON fp.product_id = s.product_id
+            WHERE s.snapshot_date = ?;
+        """, where_params + [latest_snapshot_date])
+        category_units_row = cur.fetchone() or {}
+    else:
+        cur.execute(f"""
+            SELECT
+                COALESCE(SUM(CASE WHEN p.category = 'Shirts' AND s.available = 1 THEN s.inventory_count ELSE 0 END), 0) as shirts_units,
+                COALESCE(SUM(CASE WHEN p.category = 'Jeans' AND s.available = 1 THEN s.inventory_count ELSE 0 END), 0) as denims_units,
+                COALESCE(SUM(CASE WHEN p.category IN ('Western Wear', 'Dresses', 'Tops', 'Skirts', 'Jumpsuit', 'Jumpsuits') AND s.available = 1 THEN s.inventory_count ELSE 0 END), 0) as western_units,
+                COALESCE(SUM(CASE WHEN p.category NOT IN ('Shirts', 'Jeans', 'Western Wear', 'Dresses', 'Tops', 'Skirts', 'Jumpsuit', 'Jumpsuits') AND s.available = 1 THEN s.inventory_count ELSE 0 END), 0) as others_units
+            FROM products p
+            LEFT JOIN product_sizes s ON s.product_id = p.product_id
+            WHERE {where_sql};
+        """, where_params)
+        category_units_row = cur.fetchone() or {}
 
     category_comparison = {
         "Shirts": {
@@ -1500,7 +1586,6 @@ def get_insights():
 
     # 7. Top 10 Brands by product scope. Keep this endpoint lightweight; exact
     # size-level inventory belongs in the dedicated inventory/size views.
-    latest_snapshot_date = inventory_totals["snapshot_date"]
 
     cur.execute(f"""
         SELECT
@@ -1856,40 +1941,38 @@ def get_insights():
     cto_p75_price = float(avg_price)
     cto_mode_price = int(avg_price or 0)
     try:
-        cur.execute(f"""
-            SELECT
-                COALESCE(AVG(p.selling_price), 0) AS mean_price,
-                COALESCE(AVG(p.mrp), 0) AS mean_mrp,
-                COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY p.selling_price), 0) AS median_price,
-                COALESCE(PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY p.selling_price), 0) AS p25_price,
-                COALESCE(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY p.selling_price), 0) AS p75_price,
-                COALESCE(MODE() WITHIN GROUP (ORDER BY p.selling_price), 0) AS mode_price
-            FROM products p
-            WHERE {where_sql} AND p.selling_price > 0;
-        """, where_params)
-        cto_row = cur.fetchone() or {}
-        cto_mean_price = float(cto_row["mean_price"] or avg_price)
-        cto_mean_mrp = float(cto_row["mean_mrp"] or avg_mrp_val)
-        cto_median_price = float(cto_row["median_price"] or avg_price)
-        cto_p25_price = float(cto_row["p25_price"] or avg_price)
-        cto_p75_price = float(cto_row["p75_price"] or avg_price)
-        cto_mode_price = int(round(float(cto_row["mode_price"] or avg_price or 0)))
+        if _use_exact_overview_pricing(int(total_products or 0), filters):
+            cur.execute(f"""
+                SELECT
+                    COALESCE(AVG(p.selling_price), 0) AS mean_price,
+                    COALESCE(AVG(p.mrp), 0) AS mean_mrp,
+                    COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY p.selling_price), 0) AS median_price,
+                    COALESCE(PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY p.selling_price), 0) AS p25_price,
+                    COALESCE(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY p.selling_price), 0) AS p75_price,
+                    COALESCE(MODE() WITHIN GROUP (ORDER BY p.selling_price), 0) AS mode_price
+                FROM products p
+                WHERE {where_sql} AND p.selling_price > 0;
+            """, where_params)
+            cto_row = cur.fetchone() or {}
+            cto_mean_price = float(cto_row["mean_price"] or avg_price)
+            cto_mean_mrp = float(cto_row["mean_mrp"] or avg_mrp_val)
+            cto_median_price = float(cto_row["median_price"] or avg_price)
+            cto_p25_price = float(cto_row["p25_price"] or avg_price)
+            cto_p75_price = float(cto_row["p75_price"] or avg_price)
+            cto_mode_price = int(round(float(cto_row["mode_price"] or avg_price or 0)))
+        else:
+            raise RuntimeError("Use approximated broad-scope pricing shape for dashboard performance")
     except Exception:
         sorted_sample_prices = sorted(sample_prices)
-        if sorted_sample_prices:
+        if sorted_sample_prices and _use_exact_overview_pricing(int(total_products or 0), filters):
             cto_median_price = float(_median_from_sorted(sorted_sample_prices))
             p25_idx = min(len(sorted_sample_prices) - 1, max(0, int(round((len(sorted_sample_prices) - 1) * 0.25))))
             p75_idx = min(len(sorted_sample_prices) - 1, max(0, int(round((len(sorted_sample_prices) - 1) * 0.75))))
             cto_p25_price = float(sorted_sample_prices[p25_idx])
             cto_p75_price = float(sorted_sample_prices[p75_idx])
-        pb_weights = [
-            (250, price_brackets["under_500"]),
-            (750, price_brackets["500_to_1000"]),
-            (1500, price_brackets["1000_to_2000"]),
-            (2750, price_brackets["2000_to_3500"]),
-            (4500, price_brackets["above_3500"])
-        ]
-        cto_mode_price = int(max(pb_weights, key=lambda x: x[1])[0])
+            _, _, _, cto_mode_price = _approximate_pricing_shape_from_brackets(avg_price, price_brackets)
+        else:
+            cto_median_price, cto_p25_price, cto_p75_price, cto_mode_price = _approximate_pricing_shape_from_brackets(avg_price, price_brackets)
 
     use_brand_directory = not any([
         filter_category,
