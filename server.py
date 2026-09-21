@@ -2144,12 +2144,12 @@ def get_insights():
     lead_cat_data = max(category_comparison.items(), key=lambda x: x[1].get("count", 0)) if category_comparison else ("Shirts", {})
     lead_cat = lead_cat_data[0]
     lead_cat_cnt = lead_cat_data[1].get("count", total_products)
-    lead_cat_asp = round(lead_cat_data[1].get("avg_price", avg_price))
+    lead_cat_median = round(lead_cat_data[1].get("median_price", lead_cat_data[1].get("avg_price", avg_price)))
 
     prem_candidate = max(top_brands, key=lambda b: b.get("avg_price", 0)) if top_brands else None
     prem_brand = prem_brand if prem_brand else (prem_candidate["brand"] if prem_candidate else "Flagship")
     prem_disc = round(prem_candidate["avg_discount"]) if prem_candidate else round(avg_discount_val or 0)
-    prem_asp = prem_asp if prem_asp else round(prem_candidate["avg_price"]) if prem_candidate else avg_price
+    prem_median = prem_asp if prem_asp else round(prem_candidate["median_price"]) if prem_candidate and prem_candidate.get("median_price") else round(prem_candidate["avg_price"]) if prem_candidate else avg_price
 
     core_sz_pct = 0.0
 
@@ -2199,12 +2199,12 @@ def get_insights():
         },
         {
             "title": f"Dominant Category: {lead_cat}",
-            "description": f"{lead_cat_cnt:,} active catalog SKUs leading inventory volume with ASP ₹{lead_cat_asp:,}.",
+            "description": f"{lead_cat_cnt:,} active catalog SKUs leading inventory volume with median price ₹{lead_cat_median:,}.",
             "icon": "trending"
         },
         {
             "title": f"Premium Price Tier: {prem_brand}",
-            "description": f"Maintains ASP ₹{prem_asp:,} with lower markdown rate ({prem_disc}% avg discount).",
+            "description": f"Maintains median price ₹{prem_median:,} with lower markdown rate ({prem_disc}% avg discount).",
             "icon": "star"
         },
         {
@@ -2921,15 +2921,30 @@ def get_single_product(product_id):
             cat_bench = cur.fetchone()
             if cat_bench and cat_bench[3] > 0:
                 cat_asp = round(cat_bench[0] or 0.0, 1)
+                cur.execute("""
+                    WITH ranked_prices AS (
+                        SELECT
+                            selling_price,
+                            ROW_NUMBER() OVER (ORDER BY selling_price) AS rn,
+                            COUNT(*) OVER () AS total_rows
+                        FROM products
+                        WHERE category = ? AND selling_price > 0
+                    )
+                    SELECT ROUND(AVG(selling_price), 1)
+                    FROM ranked_prices
+                    WHERE rn IN ((total_rows + 1) / 2, (total_rows + 2) / 2);
+                """, (cat,))
+                cat_median = round((cur.fetchone() or [cat_asp])[0] or cat_asp, 1)
                 cat_disc = round(cat_bench[1] or 0.0, 1)
                 cat_rating = round(cat_bench[2] or 0.0, 1)
                 p_price = (data.get("pricing", {}) or {}).get("selling_price") or 0.0
                 p_disc = (data.get("pricing", {}) or {}).get("discount_percentage") or 0
-                price_delta_bench = round(((p_price - cat_asp) / cat_asp * 100.0), 1) if cat_asp > 0 else 0.0
+                price_delta_bench = round(((p_price - cat_median) / cat_median * 100.0), 1) if cat_median > 0 else 0.0
                 disc_delta_bench = round(p_disc - cat_disc, 1)
                 data["category_benchmark"] = {
                     "category": cat,
                     "category_asp": cat_asp,
+                    "category_median_price": cat_median,
                     "category_discount": cat_disc,
                     "category_rating": cat_rating,
                     "total_category_skus": cat_bench[3],
@@ -4256,7 +4271,7 @@ def get_brand_comparator():
 
     overall_coverage = round(sum(b["tracking_coverage"] for b in brands_output) / len(brands_output)) if brands_output else 100
     selected_weighted_asp = round(
-        sum(b["avg_price"] * b["product_count"] for b in brands_output) / max(1, total_products_sum)
+        sum((b["median_price"] or b["avg_price"]) * b["product_count"] for b in brands_output) / max(1, total_products_sum)
     ) if total_products_sum else 0
 
     for b in brands_output:
@@ -4264,20 +4279,21 @@ def get_brand_comparator():
         b["stock_value_share"] = round((b["stock_val"] / max(1.0, total_stock_value_sum)) * 100, 1) if total_stock_value_sum else 0.0
         b["revenue_share"] = round((b["monthly_revenue"] / max(1.0, total_monthly_revenue)) * 100, 1) if total_monthly_revenue else 0.0
         b["sell_through_rate"] = round((b["monthly_units"] / max(1, b["stock_units"])) * 100, 2) if b["stock_units"] else 0.0
-        b["price_index"] = round((b["avg_price"] / max(1, selected_weighted_asp)) * 100, 1) if selected_weighted_asp else 0.0
+        price_basis = b["median_price"] or b["avg_price"]
+        b["price_index"] = round((price_basis / max(1, selected_weighted_asp)) * 100, 1) if selected_weighted_asp else 0.0
         b["discount_gap"] = round(b["avg_discount"] - avg_overall_disc, 1)
         b["rating_gap"] = round(b["avg_rating"] - avg_overall_rating, 2) if avg_overall_rating else 0.0
 
     by_count = sorted(brands_output, key=lambda x: x["product_count"], reverse=True)
     by_disc = sorted(brands_output, key=lambda x: x["avg_discount"], reverse=True)
-    by_asp = sorted(brands_output, key=lambda x: x["avg_price"], reverse=True)
+    by_asp = sorted(brands_output, key=lambda x: x["median_price"] or x["avg_price"], reverse=True)
     by_revenue = sorted(brands_output, key=lambda x: x["monthly_revenue"], reverse=True)
     by_sellthrough = sorted(brands_output, key=lambda x: x["sell_through_rate"], reverse=True)
 
     fallback_brand = selected_brands[0] if selected_brands else ""
     top_count_b = by_count[0]["brand"] if by_count and by_count[0]["product_count"] > 0 else fallback_brand
     top_disc_b = by_disc[0]["brand"] if by_disc and by_disc[0]["avg_discount"] > 0 else fallback_brand
-    top_asp_b = by_asp[0]["brand"] if by_asp and by_asp[0]["avg_price"] > 0 else fallback_brand
+    top_asp_b = by_asp[0]["brand"] if by_asp and (by_asp[0]["median_price"] or by_asp[0]["avg_price"]) > 0 else fallback_brand
     top_revenue_b = by_revenue[0]["brand"] if by_revenue and by_revenue[0]["monthly_revenue"] > 0 else fallback_brand
     top_sellthrough_b = by_sellthrough[0]["brand"] if by_sellthrough and by_sellthrough[0]["sell_through_rate"] > 0 else fallback_brand
 
@@ -4289,7 +4305,7 @@ def get_brand_comparator():
         )
         key_insight = (
             f"{top_count_b} leads in catalog depth ({by_count[0]['product_count']:,} products), while {top_disc_b} features the highest promotional markdown ({by_disc[0]['avg_discount']}% avg discount). "
-            f"{top_asp_b} commands premium pricing at ₹{by_asp[0]['avg_price']:,} ASP.{sales_clause}."
+            f"{top_asp_b} commands premium pricing at median ₹{int(by_asp[0]['median_price'] or by_asp[0]['avg_price']):,}.{sales_clause}."
         )
     else:
         key_insight = "No brand comparison data is available for the current selection."
@@ -5346,26 +5362,41 @@ def get_category_intelligence():
         discount_delta = round(cur_disc - prev_disc, 1)
 
     cur.execute(f"""
-        SELECT 
-            CASE 
-                WHEN POSITION('cotton' IN LOWER(COALESCE(p.fabric, ''))) > 0 AND (
-                    POSITION('blend' IN LOWER(COALESCE(p.fabric, ''))) > 0
-                    OR POSITION('poly' IN LOWER(COALESCE(p.fabric, ''))) > 0
-                    OR POSITION(',' IN LOWER(COALESCE(p.fabric, ''))) > 0
-                ) THEN 'Cotton Blend'
-                WHEN POSITION('cotton' IN LOWER(COALESCE(p.fabric, ''))) > 0 THEN 'Cotton'
-                WHEN POSITION('poly' IN LOWER(COALESCE(p.fabric, ''))) > 0 THEN 'Polyester'
-                WHEN POSITION('linen' IN LOWER(COALESCE(p.fabric, ''))) > 0 THEN 'Linen'
-                WHEN POSITION('viscose' IN LOWER(COALESCE(p.fabric, ''))) > 0 THEN 'Viscose'
-                WHEN POSITION('rayon' IN LOWER(COALESCE(p.fabric, ''))) > 0 THEN 'Rayon'
-                WHEN POSITION('denim' IN LOWER(COALESCE(p.fabric, ''))) > 0 THEN 'Denim'
-                WHEN POSITION('silk' IN LOWER(COALESCE(p.fabric, ''))) > 0 THEN 'Silk'
-                ELSE 'Others'
-            END as clean_fabric,
-            COUNT(*) as f_cnt,
-            ROUND(AVG(p.selling_price)) as f_asp
-        FROM products p
-        WHERE {where_sql} AND p.fabric IS NOT NULL AND p.fabric != ''
+        WITH fabric_prices AS (
+            SELECT
+                CASE
+                    WHEN POSITION('cotton' IN LOWER(COALESCE(p.fabric, ''))) > 0 AND (
+                        POSITION('blend' IN LOWER(COALESCE(p.fabric, ''))) > 0
+                        OR POSITION('poly' IN LOWER(COALESCE(p.fabric, ''))) > 0
+                        OR POSITION(',' IN LOWER(COALESCE(p.fabric, ''))) > 0
+                    ) THEN 'Cotton Blend'
+                    WHEN POSITION('cotton' IN LOWER(COALESCE(p.fabric, ''))) > 0 THEN 'Cotton'
+                    WHEN POSITION('poly' IN LOWER(COALESCE(p.fabric, ''))) > 0 THEN 'Polyester'
+                    WHEN POSITION('linen' IN LOWER(COALESCE(p.fabric, ''))) > 0 THEN 'Linen'
+                    WHEN POSITION('viscose' IN LOWER(COALESCE(p.fabric, ''))) > 0 THEN 'Viscose'
+                    WHEN POSITION('rayon' IN LOWER(COALESCE(p.fabric, ''))) > 0 THEN 'Rayon'
+                    WHEN POSITION('denim' IN LOWER(COALESCE(p.fabric, ''))) > 0 THEN 'Denim'
+                    WHEN POSITION('silk' IN LOWER(COALESCE(p.fabric, ''))) > 0 THEN 'Silk'
+                    ELSE 'Others'
+                END AS clean_fabric,
+                p.selling_price
+            FROM products p
+            WHERE {where_sql} AND p.fabric IS NOT NULL AND p.fabric != '' AND p.selling_price > 0
+        ),
+        ranked_fabrics AS (
+            SELECT
+                clean_fabric,
+                selling_price,
+                ROW_NUMBER() OVER (PARTITION BY clean_fabric ORDER BY selling_price) AS rn,
+                COUNT(*) OVER (PARTITION BY clean_fabric) AS total_rows
+            FROM fabric_prices
+        )
+        SELECT
+            clean_fabric,
+            COUNT(*) AS f_cnt,
+            ROUND(AVG(selling_price)) AS f_asp,
+            ROUND(AVG(CASE WHEN rn IN ((total_rows + 1) / 2, (total_rows + 2) / 2) THEN selling_price END)) AS median_price
+        FROM ranked_fabrics
         GROUP BY clean_fabric
         ORDER BY f_cnt DESC
         LIMIT 8;
@@ -5377,7 +5408,8 @@ def get_category_intelligence():
             "fabric": r["clean_fabric"],
             "products": int(r["f_cnt"] or 0),
             "share": f"{round((int(r['f_cnt'] or 0) / max(1, total_prods) * 100.0), 1)}%",
-            "avg_price": f"₹{int(r['f_asp'] or 0):,}"
+            "avg_price": f"₹{int(r['f_asp'] or 0):,}",
+            "median_price": f"₹{int(r['median_price'] or r['f_asp'] or 0):,}"
         }
         for r in f_rows
     ]
@@ -5582,6 +5614,7 @@ def get_fabric_intelligence():
     top_fabric_name = ""
     top_fabric_share = "0.0%"
     top_fabric_asp = 0
+    top_fabric_median = 0
     fabric_distribution = []
     top_fabrics_ranked = []
     average_price_by_fabric = []
@@ -5625,6 +5658,8 @@ def get_fabric_intelligence():
                         max(fabric_mode_bands[f_name].items(), key=lambda item: (item[1], -item[0]))[0],
                         asp
                     )
+                if idx == 0:
+                    top_fabric_median = median_price
 
                 fabric_distribution.append({"fabric": f_name, "count": cnt, "share": sh})
                 top_fabrics_ranked.append({"rank": idx + 1, "fabric": f_name, "count": cnt, "share": sh})
@@ -5800,6 +5835,7 @@ def get_fabric_intelligence():
             "unique_fabrics": unique_fabrics,
             "top_fabric": top_fabric_name,
             "top_fabric_share": f"{top_fabric_share} share",
+            "median_price": f"₹{(top_fabric_median or top_fabric_asp):,}",
             "avg_price": f"₹{top_fabric_asp:,}",
             "avg_price_growth": avg_price_growth
         },
@@ -6674,22 +6710,45 @@ def get_price_intelligence():
         "total_products_formatted": f"{total_cnt:,}"
     }
 
-    # 4. Average Price Trend from inventory snapshots
+    # 4. Median Price Trend from inventory snapshots
     cur.execute(f"""
-        SELECT snap.snapshot_date, ROUND(AVG(snap.selling_price)) as asp
-        FROM daily_inventory_snapshots snap
-        JOIN products p ON p.product_id = snap.product_id
-        WHERE {where_sql}
-        GROUP BY snap.snapshot_date
-        ORDER BY snap.snapshot_date DESC
+        WITH ranked_snapshots AS (
+            SELECT
+                snap.snapshot_date,
+                snap.selling_price,
+                ROW_NUMBER() OVER (PARTITION BY snap.snapshot_date ORDER BY snap.selling_price) AS rn,
+                COUNT(*) OVER (PARTITION BY snap.snapshot_date) AS total_rows
+            FROM daily_inventory_snapshots snap
+            JOIN products p ON p.product_id = snap.product_id
+            WHERE {where_sql} AND snap.selling_price > 0
+        )
+        SELECT
+            snapshot_date,
+            ROUND(AVG(selling_price)) AS median_price
+        FROM ranked_snapshots
+        WHERE rn IN ((total_rows + 1) / 2, (total_rows + 2) / 2)
+        GROUP BY snapshot_date
+        ORDER BY snapshot_date DESC
         LIMIT 6;
     """, params)
     cat_trend_rows = cur.fetchall()
     cat_trend_rows = list(reversed(cat_trend_rows))
 
     cur.execute("""
-        SELECT snapshot_date, ROUND(AVG(selling_price)) as asp
-        FROM daily_inventory_snapshots
+        WITH ranked_snapshots AS (
+            SELECT
+                snapshot_date,
+                selling_price,
+                ROW_NUMBER() OVER (PARTITION BY snapshot_date ORDER BY selling_price) AS rn,
+                COUNT(*) OVER (PARTITION BY snapshot_date) AS total_rows
+            FROM daily_inventory_snapshots
+            WHERE selling_price > 0
+        )
+        SELECT
+            snapshot_date,
+            ROUND(AVG(selling_price)) AS median_price
+        FROM ranked_snapshots
+        WHERE rn IN ((total_rows + 1) / 2, (total_rows + 2) / 2)
         GROUP BY snapshot_date
         ORDER BY snapshot_date DESC
         LIMIT 6;
@@ -6721,8 +6780,9 @@ def get_price_intelligence():
         "category_trend": cat_trend,
         "overall_trend": overall_trend,
         "category_name": (cat.capitalize() if cat else "Category"),
+        "latest_median": f"₹{int(median_p):,}",
         "latest_asp": f"₹{int(avg_p):,}",
-        "delta_badge": f"↑ {abs(asp_delta_pct)}%" if asp_delta_pct >= 0 else f"↓ {abs(asp_delta_pct)}%"
+        "delta_badge": f"↑ {abs(median_delta_pct)}%" if median_delta_pct >= 0 else f"↓ {abs(median_delta_pct)}%"
     }
 
     data_window = {
@@ -6736,16 +6796,47 @@ def get_price_intelligence():
 
     # 5. Exact scoped analytics for positioning, fabric, color, heatmap, and top brands
     cur.execute(f"""
+        WITH filtered_products AS (
+            SELECT
+                p.brand,
+                p.selling_price,
+                COALESCE(p.discount_percentage, 0) AS discount_percentage
+            FROM products p
+            WHERE {where_sql} AND p.brand IS NOT NULL AND p.brand != ''
+        ),
+        top_brands AS (
+            SELECT
+                brand,
+                COUNT(*) AS product_count,
+                ROUND(AVG(discount_percentage), 1) AS avg_discount,
+                ROUND(AVG(selling_price), 1) AS avg_price
+            FROM filtered_products
+            GROUP BY brand
+            ORDER BY product_count DESC, brand ASC
+            LIMIT 12
+        ),
+        ranked_prices AS (
+            SELECT
+                fp.brand,
+                fp.selling_price,
+                ROW_NUMBER() OVER (PARTITION BY fp.brand ORDER BY fp.selling_price) AS rn,
+                COUNT(*) OVER (PARTITION BY fp.brand) AS total_rows
+            FROM filtered_products fp
+            JOIN top_brands tb ON tb.brand = fp.brand
+            WHERE fp.selling_price > 0
+        )
         SELECT
-            p.brand,
-            COUNT(*) AS product_count,
-            ROUND(AVG(p.selling_price), 1) AS avg_price,
-            ROUND(AVG(COALESCE(p.discount_percentage, 0)), 1) AS avg_discount
-        FROM products p
-        WHERE {where_sql} AND p.brand IS NOT NULL AND p.brand != ''
-        GROUP BY p.brand
-        ORDER BY product_count DESC, avg_price DESC
-        LIMIT 12;
+            tb.brand,
+            tb.product_count,
+            tb.avg_price,
+            tb.avg_discount,
+            ROUND(AVG(rp.selling_price), 1) AS median_price
+        FROM top_brands tb
+        LEFT JOIN ranked_prices rp
+          ON rp.brand = tb.brand
+         AND rp.rn IN ((rp.total_rows + 1) / 2, (rp.total_rows + 2) / 2)
+        GROUP BY tb.brand, tb.product_count, tb.avg_price, tb.avg_discount
+        ORDER BY tb.product_count DESC, median_price DESC, tb.brand ASC;
     """, params)
     price_positioning_rows = cur.fetchall()
     max_cnt = max([int(row["product_count"] or 0) for row in price_positioning_rows], default=1)
@@ -6757,6 +6848,7 @@ def get_price_intelligence():
             "brand": row["brand"],
             "product_count": count,
             "avg_price": float(row["avg_price"] or 0.0),
+            "median_price": float(row["median_price"] or row["avg_price"] or 0.0),
             "avg_discount": float(row["avg_discount"] or 0.0),
             "radius": radius
         })
@@ -6863,9 +6955,19 @@ def get_price_intelligence():
 
     cur.execute(f"""
         WITH scoped_products AS (
-            SELECT p.brand, p.selling_price
+            SELECT
+                p.brand,
+                p.selling_price,
+                CASE
+                    WHEN p.selling_price < 500 THEN 'b1'
+                    WHEN p.selling_price >= 500 AND p.selling_price < 1000 THEN 'b2'
+                    WHEN p.selling_price >= 1000 AND p.selling_price < 2000 THEN 'b3'
+                    WHEN p.selling_price >= 2000 AND p.selling_price < 3000 THEN 'b4'
+                    WHEN p.selling_price >= 3000 THEN 'b5'
+                    ELSE NULL
+                END AS bucket
             FROM products p
-            WHERE {where_sql} AND p.brand IS NOT NULL AND p.brand != ''
+            WHERE {where_sql} AND p.brand IS NOT NULL AND p.brand != '' AND p.selling_price > 0
         ),
         top_brands AS (
             SELECT brand, COUNT(*) AS cnt
@@ -6873,56 +6975,98 @@ def get_price_intelligence():
             GROUP BY brand
             ORDER BY cnt DESC, brand ASC
             LIMIT 7
+        ),
+        ranked_bucket_prices AS (
+            SELECT
+                sp.brand,
+                sp.bucket,
+                sp.selling_price,
+                ROW_NUMBER() OVER (PARTITION BY sp.brand, sp.bucket ORDER BY sp.selling_price) AS rn,
+                COUNT(*) OVER (PARTITION BY sp.brand, sp.bucket) AS total_rows
+            FROM scoped_products sp
+            JOIN top_brands tb ON tb.brand = sp.brand
+            WHERE sp.bucket IS NOT NULL
+        ),
+        bucket_counts AS (
+            SELECT brand, bucket, COUNT(*) AS bucket_count
+            FROM ranked_bucket_prices
+            GROUP BY brand, bucket
+        ),
+        bucket_medians AS (
+            SELECT
+                brand,
+                bucket,
+                ROUND(AVG(selling_price)) AS median_price
+            FROM ranked_bucket_prices
+            WHERE rn IN ((total_rows + 1) / 2, (total_rows + 2) / 2)
+            GROUP BY brand, bucket
         )
         SELECT
-            sp.brand,
-            SUM(CASE WHEN sp.selling_price < 500 THEN 1 ELSE 0 END) AS b1_cnt,
-            ROUND(AVG(CASE WHEN sp.selling_price < 500 THEN sp.selling_price END)) AS b1_avg,
-            SUM(CASE WHEN sp.selling_price >= 500 AND sp.selling_price < 1000 THEN 1 ELSE 0 END) AS b2_cnt,
-            ROUND(AVG(CASE WHEN sp.selling_price >= 500 AND sp.selling_price < 1000 THEN sp.selling_price END)) AS b2_avg,
-            SUM(CASE WHEN sp.selling_price >= 1000 AND sp.selling_price < 2000 THEN 1 ELSE 0 END) AS b3_cnt,
-            ROUND(AVG(CASE WHEN sp.selling_price >= 1000 AND sp.selling_price < 2000 THEN sp.selling_price END)) AS b3_avg,
-            SUM(CASE WHEN sp.selling_price >= 2000 AND sp.selling_price < 3000 THEN 1 ELSE 0 END) AS b4_cnt,
-            ROUND(AVG(CASE WHEN sp.selling_price >= 2000 AND sp.selling_price < 3000 THEN sp.selling_price END)) AS b4_avg,
-            SUM(CASE WHEN sp.selling_price >= 3000 THEN 1 ELSE 0 END) AS b5_cnt,
-            ROUND(AVG(CASE WHEN sp.selling_price >= 3000 THEN sp.selling_price END)) AS b5_avg
-        FROM scoped_products sp
-        JOIN top_brands tb ON tb.brand = sp.brand
-        GROUP BY sp.brand, tb.cnt
-        ORDER BY tb.cnt DESC, sp.brand ASC;
+            tb.brand,
+            MAX(CASE WHEN bc.bucket = 'b1' THEN bc.bucket_count END) AS b1_cnt,
+            MAX(CASE WHEN bm.bucket = 'b1' THEN bm.median_price END) AS b1_median,
+            MAX(CASE WHEN bc.bucket = 'b2' THEN bc.bucket_count END) AS b2_cnt,
+            MAX(CASE WHEN bm.bucket = 'b2' THEN bm.median_price END) AS b2_median,
+            MAX(CASE WHEN bc.bucket = 'b3' THEN bc.bucket_count END) AS b3_cnt,
+            MAX(CASE WHEN bm.bucket = 'b3' THEN bm.median_price END) AS b3_median,
+            MAX(CASE WHEN bc.bucket = 'b4' THEN bc.bucket_count END) AS b4_cnt,
+            MAX(CASE WHEN bm.bucket = 'b4' THEN bm.median_price END) AS b4_median,
+            MAX(CASE WHEN bc.bucket = 'b5' THEN bc.bucket_count END) AS b5_cnt,
+            MAX(CASE WHEN bm.bucket = 'b5' THEN bm.median_price END) AS b5_median
+        FROM top_brands tb
+        LEFT JOIN bucket_counts bc ON bc.brand = tb.brand
+        LEFT JOIN bucket_medians bm ON bm.brand = tb.brand
+         AND bm.bucket = bc.bucket
+        GROUP BY tb.brand, tb.cnt
+        ORDER BY tb.cnt DESC, tb.brand ASC;
     """, params)
     price_heatmap = []
     for row in cur.fetchall():
         price_heatmap.append({
             "brand": row["brand"],
             "b1_cnt": int(row["b1_cnt"] or 0),
-            "b1_avg": _safe_int(row["b1_avg"]) if row["b1_avg"] is not None else "-",
+            "b1_median": _safe_int(row["b1_median"]) if row["b1_median"] is not None else "-",
             "b2_cnt": int(row["b2_cnt"] or 0),
-            "b2_avg": _safe_int(row["b2_avg"]) if row["b2_avg"] is not None else "-",
+            "b2_median": _safe_int(row["b2_median"]) if row["b2_median"] is not None else "-",
             "b3_cnt": int(row["b3_cnt"] or 0),
-            "b3_avg": _safe_int(row["b3_avg"]) if row["b3_avg"] is not None else "-",
+            "b3_median": _safe_int(row["b3_median"]) if row["b3_median"] is not None else "-",
             "b4_cnt": int(row["b4_cnt"] or 0),
-            "b4_avg": _safe_int(row["b4_avg"]) if row["b4_avg"] is not None else "-",
+            "b4_median": _safe_int(row["b4_median"]) if row["b4_median"] is not None else "-",
             "b5_cnt": int(row["b5_cnt"] or 0),
-            "b5_avg": _safe_int(row["b5_avg"]) if row["b5_avg"] is not None else "-"
+            "b5_median": _safe_int(row["b5_median"]) if row["b5_median"] is not None else "-"
         })
 
     cur.execute(f"""
+        WITH ranked_brand_prices AS (
+            SELECT
+                p.brand,
+                p.selling_price,
+                ROW_NUMBER() OVER (PARTITION BY p.brand ORDER BY p.selling_price) AS rn,
+                COUNT(*) OVER (PARTITION BY p.brand) AS total_rows
+            FROM products p
+            WHERE {where_sql} AND p.brand IS NOT NULL AND p.brand != '' AND p.selling_price > 0
+        ),
+        brand_counts AS (
+            SELECT brand, COUNT(*) AS product_count
+            FROM ranked_brand_prices
+            GROUP BY brand
+        )
         SELECT
-            p.brand,
-            ROUND(AVG(p.selling_price)) AS avg_price,
-            COUNT(*) AS product_count
-        FROM products p
-        WHERE {where_sql} AND p.brand IS NOT NULL AND p.brand != ''
-        GROUP BY p.brand
-        HAVING COUNT(*) >= 5
-        ORDER BY avg_price DESC, product_count DESC
+            rbp.brand,
+            bc.product_count,
+            ROUND(AVG(rbp.selling_price)) AS median_price
+        FROM ranked_brand_prices rbp
+        JOIN brand_counts bc ON bc.brand = rbp.brand
+        WHERE rbp.rn IN ((rbp.total_rows + 1) / 2, (rbp.total_rows + 2) / 2)
+        GROUP BY rbp.brand, bc.product_count
+        HAVING bc.product_count >= 5
+        ORDER BY median_price DESC, bc.product_count DESC
         LIMIT 5;
     """, params)
     top_asp_brands = [{
         "brand": row["brand"],
-        "avg_price": _safe_int(row["avg_price"]),
-        "avg_price_formatted": f"₹{_safe_int(row['avg_price']):,}"
+        "median_price": _safe_int(row["median_price"]),
+        "median_price_formatted": f"₹{_safe_int(row['median_price']):,}"
     } for row in cur.fetchall()]
 
     cur.execute(f"""
@@ -7695,18 +7839,31 @@ def get_color_intelligence():
             WHERE {where_sql} AND {_valid_color_sql("p.primary_color")}
             GROUP BY p.primary_color
         )
-        SELECT 
-            p.primary_color, 
-            MAX(COALESCE(NULLIF(p.color_hex, ''), '#0f172a')) as hex_val, 
-            COUNT(*) as cnt,
-            ROUND(AVG(p.selling_price)) as avg_price,
-            ROUND(AVG(p.discount_percentage), 1) as avg_disc,
-            COALESCE(cs.curr_units, 0) as curr_units,
-            COALESCE(cs.prev_units, 0) as prev_units
-        FROM products p
-        LEFT JOIN color_sales cs ON cs.primary_color = p.primary_color
-        WHERE {where_sql} AND {_valid_color_sql("p.primary_color")}
-        GROUP BY p.primary_color, cs.curr_units, cs.prev_units
+        WITH ranked_colors AS (
+            SELECT
+                p.primary_color,
+                p.selling_price,
+                COALESCE(NULLIF(p.color_hex, ''), '#0f172a') AS color_hex,
+                COALESCE(p.discount_percentage, 0) AS discount_percentage,
+                COALESCE(cs.curr_units, 0) AS curr_units,
+                COALESCE(cs.prev_units, 0) AS prev_units,
+                ROW_NUMBER() OVER (PARTITION BY p.primary_color ORDER BY p.selling_price) AS rn,
+                COUNT(*) OVER (PARTITION BY p.primary_color) AS total_rows
+            FROM products p
+            LEFT JOIN color_sales cs ON cs.primary_color = p.primary_color
+            WHERE {where_sql} AND {_valid_color_sql("p.primary_color")}
+        )
+        SELECT
+            primary_color,
+            MAX(color_hex) AS hex_val,
+            COUNT(*) AS cnt,
+            ROUND(AVG(selling_price)) AS avg_price,
+            ROUND(AVG(CASE WHEN rn IN ((total_rows + 1) / 2, (total_rows + 2) / 2) THEN selling_price END)) AS median_price,
+            ROUND(AVG(discount_percentage), 1) AS avg_disc,
+            MAX(curr_units) AS curr_units,
+            MAX(prev_units) AS prev_units
+        FROM ranked_colors
+        GROUP BY primary_color
         ORDER BY cnt DESC;
     """, params + params)
     color_rows = cur.fetchall()
@@ -7726,6 +7883,8 @@ def get_color_intelligence():
             "share_pct": share_pct,
             "avg_price": int(r["avg_price"] or 0),
             "avg_price_fmt": f"₹{int(r['avg_price'] or 0):,}",
+            "median_price": int(r["median_price"] or r["avg_price"] or 0),
+            "median_price_fmt": f"₹{int(r['median_price'] or r['avg_price'] or 0):,}",
             "avg_disc": float(r["avg_disc"] or 0.0),
             "units_sold": units_sold,
             "current_units": units_sold,

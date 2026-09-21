@@ -832,12 +832,10 @@ function renderOverviewDashboardInsights(stats, insights) {
 function renderFullDashboardInsights(stats, insights) {
   renderOverviewDashboardInsights(stats, insights);
   renderGeographicDemand(insights);
-  renderTrendingBrands(insights);
   renderInventoryHeatmap(insights);
   renderAiMarketInsights(insights);
   renderDashboardFabrics(insights);
   renderDashboardColors(insights);
-  renderDashboardTop3Products(insights);
   renderBrandValuationMatrix(insights);
 }
 
@@ -938,8 +936,8 @@ function renderCTOPricingMetrics(insights) {
   setTxt(
     'ctoPriceScopeMeta',
     p.mean_price > 0 || p.median_price > 0
-      ? `Scope mean ${p.mean_price > 0 ? `₹${Math.round(p.mean_price).toLocaleString('en-IN')}` : '—'} | median ${p.median_price > 0 ? `₹${Math.round(p.median_price).toLocaleString('en-IN')}` : '—'}`
-      : 'Scope mean — | median —'
+      ? `Scope median ${p.median_price > 0 ? `₹${Math.round(p.median_price).toLocaleString('en-IN')}` : '—'} | mean ${p.mean_price > 0 ? `₹${Math.round(p.mean_price).toLocaleString('en-IN')}` : '—'}`
+      : 'Scope median — | mean —'
   );
 }
 
@@ -1248,8 +1246,8 @@ function renderBrandValuationMatrix(insights) {
       <td><span class="badge-tag" style="background:#f1f5f9;color:#334155;font-size:10.5px;">${b.scale_tier}</span></td>
       <td>${(b.skus || 0).toLocaleString()}</td>
       <td>
-        <div style="font-weight:700;color:#0f172a;">₹${Math.round(b.mean_price || 0).toLocaleString('en-IN')}</div>
-        <div style="font-size:10px;color:#64748b;margin-top:2px;">Median ₹${Math.round(b.median_price || 0).toLocaleString('en-IN')}</div>
+        <div style="font-weight:700;color:#0f172a;">₹${Math.round(b.median_price || 0).toLocaleString('en-IN')}</div>
+        <div style="font-size:10px;color:#64748b;margin-top:2px;">Mean ₹${Math.round(b.mean_price || 0).toLocaleString('en-IN')}</div>
       </td>
       <td style="font-weight:750;color:#0f172a;">₹${Math.round(b.inventory_valuation || 0).toLocaleString()}</td>
     </tr>
@@ -1321,27 +1319,40 @@ function renderDashboardKPIs(stats, insights) {
   setTxt('kpiInventoryValuation', valuation > 0 ? formatCurrencyCompactIN(valuation) : '—');
   setTxt('kpiInventoryValuationSub', valuationMrp > 0 ? `MRP value ${formatCurrencyCompactIN(valuationMrp)}` : 'Sell-side stock value');
 
-  // KPI 5: Mean Selling Price — real from DB
+  // KPI 5: Median Selling Price — primary market read
   const meanPriceRaw = insights.cto_pricing?.mean_price ?? stats.average_price ?? insights.avg_price ?? 0;
   const avgPrice = Math.round(Number(meanPriceRaw || 0));
   const avgMrp = Math.round(Number(insights.avg_mrp || stats.average_mrp || 0));
-  setTxt('kpiMeanPrice', `₹${avgPrice.toLocaleString('en-IN')}`);
+  const medianPrice = Math.round(Number(insights.cto_pricing?.median_price || 0));
+  const modePrice = Math.round(Number(insights.cto_pricing?.mode_price || 0));
+  setTxt('kpiMeanPrice', medianPrice > 0 ? `₹${medianPrice.toLocaleString('en-IN')}` : '—');
   const priceTrendEl = document.getElementById('kpiTrendMeanPrice');
-  formatTrendBadge(priceTrendEl, trends.price_delta_pct);
+  if (priceTrendEl) {
+    priceTrendEl.textContent = 'Live';
+    priceTrendEl.className = 'kpi-trend neutral';
+  }
   const iqrLow = Number(insights.cto_pricing?.p25_price || 0);
   const iqrHigh = Number(insights.cto_pricing?.p75_price || 0);
   setTxt(
     'kpiMeanPriceSub',
     iqrLow > 0 && iqrHigh > 0
       ? `Middle 50%: ₹${Math.round(iqrLow).toLocaleString('en-IN')} – ₹${Math.round(iqrHigh).toLocaleString('en-IN')}`
-      : `MRP ₹${avgMrp.toLocaleString('en-IN')} (Avg)`
+      : '50th percentile price signal'
   );
 
-  // KPI 6: Median Selling Price — center price read
-  const medianPrice = Math.round(Number(insights.cto_pricing?.median_price || 0));
-  const modePrice = Math.round(Number(insights.cto_pricing?.mode_price || 0));
-  setTxt('kpiMedianPrice', medianPrice > 0 ? `₹${medianPrice.toLocaleString('en-IN')}` : '—');
-  setTxt('kpiMedianPriceSub', modePrice > 0 ? `Most common price ₹${modePrice.toLocaleString('en-IN')}` : '50th percentile price');
+  // KPI 6: Mean Selling Price — supporting context for skew
+  setTxt('kpiMedianPrice', `₹${avgPrice.toLocaleString('en-IN')}`);
+  const meanTrendEl = document.getElementById('kpiTrendMedianPrice');
+  if (meanTrendEl) {
+    meanTrendEl.textContent = 'Context';
+    meanTrendEl.className = 'kpi-trend neutral';
+  }
+  setTxt(
+    'kpiMedianPriceSub',
+    modePrice > 0
+      ? `Most common price ₹${modePrice.toLocaleString('en-IN')}${avgMrp > 0 ? ` • Avg MRP ₹${avgMrp.toLocaleString('en-IN')}` : ''}`
+      : (avgMrp > 0 ? `Avg MRP ₹${avgMrp.toLocaleString('en-IN')}` : 'Arithmetic mean price')
+  );
 
   // KPI 7: Average Discount — real from DB
   const avgDisc = insights.avg_discount_pct !== undefined ? Number(insights.avg_discount_pct) : Number(stats.average_discount || 0);
@@ -1600,41 +1611,6 @@ function renderGeographicDemand(insights) {
   `).join('');
 }
 
-// Top Trending Brands - FULLY DYNAMIC from /api/insights
-function renderTrendingBrands(insights) {
-  const listEl = document.getElementById('trendingBrandsList');
-  if (!listEl) return;
-
-  const brands = Array.isArray(insights.trending_brands) ? insights.trending_brands.slice(0, 5) : [];
-
-  if (!brands.length) {
-    listEl.innerHTML = '<div style="padding:12px;color:#94a3b8;font-size:12px;text-align:center;">No recent sales trend data is available for this scope yet.</div>';
-    return;
-  }
-
-  const maxMetric = Math.max(1, ...brands.map(b => Math.abs(Number(b.growth ?? b.skus ?? 0))));
-
-  listEl.innerHTML = brands.map((b, idx) => {
-    const num = String(idx + 1).padStart(2, '0');
-    const usesGrowth = b.growth !== undefined && b.growth !== null;
-    const metricVal = Math.abs(Number(usesGrowth ? b.growth : b.skus) || 0);
-    const barWidth = Math.min(100, Math.round((metricVal / maxMetric) * 100));
-    const metricText = usesGrowth
-      ? `${b.direction || (Number(b.growth) >= 0 ? '+' : '-')}${Math.abs(Number(b.growth) || 0).toFixed(1)}%`
-      : `${displayCount(b.skus, '0')} SKUs`;
-    return `
-      <div class="trend-brand-row">
-        <div class="trend-brand-badge">${num}</div>
-        <span class="trend-brand-name" title="${b.brand}">${b.brand}</span>
-        <div class="trend-bar-track">
-          <div class="trend-bar-fill" style="width: ${barWidth}%;"></div>
-        </div>
-        <span class="trend-percent">${metricText}</span>
-      </div>
-    `;
-  }).join('');
-}
-
 // Inventory Heatmap Matrix - FULLY DYNAMIC from /api/insights
 function renderInventoryHeatmap(insights) {
   const tbody = document.getElementById('heatmapTableBody');
@@ -1733,38 +1709,6 @@ function renderDashboardColors(insights) {
       <div style="display:flex; gap:12px; font-weight:600;">
         <span style="color:#64748b;">${(c.count || 0).toLocaleString()} SKUs</span>
         <span style="color:#10b981; background:#ecfdf5; padding:1px 6px; border-radius:4px; font-size:11px;">${c.discount}% OFF</span>
-      </div>
-    </div>
-  `).join('');
-}
-
-// Render Dashboard Top 3 Featured Best-Sellers Card
-function renderDashboardTop3Products(insights) {
-  const container = document.getElementById('dashboardTop3ProductsList');
-  if (!container) return;
-
-  const products = insights.top_3_products || [];
-  if (products.length === 0) {
-    container.innerHTML = '<div style="text-align:center; padding:16px; color:#94a3b8; font-size:12px;">No qualifying best-seller products were found for the current scope.</div>';
-    return;
-  }
-
-  container.innerHTML = products.map((p, idx) => `
-    <div style="display:flex; align-items:center; gap:12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:8px 12px; cursor:pointer;" onclick="viewProductDetailModal(${p.product_id})">
-      <div style="font-size:13px; font-weight:800; color:#0f172a; width:18px;">#${idx + 1}</div>
-      <img src="${p.image || '/assets/luxury_silk_banner.jpg'}" style="width:42px; height:54px; object-fit:cover; border-radius:6px; flex-shrink:0;" onerror="this.src='/assets/luxury_silk_banner.jpg'" />
-      <div style="flex:1; min-width:0;">
-        <div style="font-size:11px; font-weight:800; color:#0f172a; text-transform:uppercase; letter-spacing:0.3px;">${escapeHtml(p.brand || 'Brand')}</div>
-        <div style="font-size:12px; color:#475569; font-weight:600; text-overflow:ellipsis; overflow:hidden; white-space:nowrap;">${escapeHtml(p.title || 'Product Title')}</div>
-        <div style="display:flex; align-items:center; gap:8px; margin-top:2px;">
-          <span style="font-size:12px; font-weight:800; color:#0f172a;">₹${(p.selling_price || 0).toLocaleString()}</span>
-          ${p.mrp > p.selling_price ? `<span style="font-size:11px; color:#94a3b8; text-decoration:line-through;">₹${p.mrp.toLocaleString()}</span>` : ''}
-          <span style="font-size:10px; font-weight:700; color:#059669; background:#ecfdf5; padding:1px 5px; border-radius:4px;">${p.discount_percentage}% OFF</span>
-        </div>
-      </div>
-      <div style="font-size:11px; font-weight:700; color:#0f172a; flex-shrink:0; text-align:right;">
-        <div style="color:#f59e0b;">★ ${p.rating || 4.5}</div>
-        <div style="font-size:10px; color:#94a3b8;">(${(p.rating_count || 0).toLocaleString()})</div>
       </div>
     </div>
   `).join('');
@@ -2839,8 +2783,8 @@ async function openProductDrawer(productId, showBackdrop = true) {
           </div>
           <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; text-align:center;">
             <div style="background:#fff; border:1px solid #e2e8f0; border-radius:6px; padding:6px 8px;">
-              <span style="font-size:10px; color:#64748b; display:block;">Category ASP</span>
-              <strong style="font-size:13px; color:#0f172a;">₹${Math.round(catBench.category_asp).toLocaleString()}</strong>
+              <span style="font-size:10px; color:#64748b; display:block;">Category Median Price</span>
+              <strong style="font-size:13px; color:#0f172a;">₹${Math.round(catBench.category_median_price || catBench.category_asp || 0).toLocaleString()}</strong>
               <small style="display:block; font-size:9.5px; color:${catBench.price_delta_pct <= 0 ? '#059669' : '#dc2626'}; font-weight:700;">
                 ${catBench.price_delta_pct <= 0 ? `${Math.abs(catBench.price_delta_pct)}% below avg` : `+${catBench.price_delta_pct}% above avg`}
               </small>
@@ -3885,9 +3829,9 @@ function renderComparatorBrandCards(brands) {
           ${getBrandSparklineSVG(b.sparkline)}
         </div>
         <div class="brand-metric-col" style="text-align: right; align-items: flex-end;">
-          <span class="brand-metric-lbl">ASP / Median</span>
-          <span class="brand-metric-num">${formatComparatorPrice(b.avg_price)}</span>
-          <span style="font-size: 9px; color: #64748b;">Median ${formatComparatorPrice(b.median_price)}</span>
+          <span class="brand-metric-lbl">Median / Mean</span>
+          <span class="brand-metric-num">${formatComparatorPrice(b.median_price)}</span>
+          <span style="font-size: 9px; color: #64748b;">Mean ${formatComparatorPrice(b.avg_price)}</span>
           <span class="brand-growth-badge">${Number(b.growth_30d || 0) >= 0 ? '▲' : '▼'} ${Math.abs(Number(b.growth_30d || 0)).toFixed(1)}%</span>
           <span style="font-size: 8px; color: #94a3b8;">Sales rev growth</span>
         </div>
@@ -4023,11 +3967,11 @@ function renderComparatorCharts(brands) {
     });
   }
 
-  // Chart 2: Average Selling Price (ASP)
+  // Chart 2: Median Selling Price
   const aspCanvas = document.getElementById('compChartAsp');
   if (aspCanvas) {
     if (compChartAsp) compChartAsp.destroy();
-    const asps = brands.map(b => b.avg_price);
+    const asps = brands.map(b => b.median_price || b.avg_price);
     const aspColors = comparatorBarColors(asps);
     compChartAsp = new Chart(aspCanvas, {
       type: 'bar',
@@ -4145,7 +4089,7 @@ function renderComparatorPeerMatrix(brands, leaders = {}, windows = {}) {
             <th style="padding:10px; text-align:left;">Brand</th>
             <th style="padding:10px; text-align:right;">Products</th>
             <th style="padding:10px; text-align:right;">Product Share</th>
-            <th style="padding:10px; text-align:right;">ASP</th>
+            <th style="padding:10px; text-align:right;">Median Price</th>
             <th style="padding:10px; text-align:right;">Price Index</th>
             <th style="padding:10px; text-align:right;">Avg Discount</th>
             <th style="padding:10px; text-align:right;">Stock Value</th>
@@ -4161,7 +4105,7 @@ function renderComparatorPeerMatrix(brands, leaders = {}, windows = {}) {
               <td style="padding:10px; font-weight:850; color:#0f172a;">${escapeHtml(b.display_name || b.brand)}${leaderBadge('catalog_depth', b.brand)}</td>
               <td style="padding:10px; text-align:right; font-weight:800;">${Number(b.product_count || 0).toLocaleString('en-IN')}</td>
               <td style="padding:10px; text-align:right;">${formatComparatorPct(b.product_share)}</td>
-              <td style="padding:10px; text-align:right; font-weight:800;">${formatComparatorPrice(b.avg_price)}${leaderBadge('premium_price', b.brand)}</td>
+              <td style="padding:10px; text-align:right; font-weight:800;">${formatComparatorPrice(b.median_price || b.avg_price)}${leaderBadge('premium_price', b.brand)}</td>
               <td style="padding:10px; text-align:right;">${Number(b.price_index || 0).toFixed(1)}</td>
               <td style="padding:10px; text-align:right; font-weight:800;">${formatComparatorPct(b.avg_discount)}${leaderBadge('deepest_discount', b.brand)}</td>
               <td style="padding:10px; text-align:right;">${escapeHtml(b.stock_value || '₹0')}</td>
@@ -4642,13 +4586,13 @@ function renderColorPriceChart(data) {
 
   if (colorAvgPriceBarInst) colorAvgPriceBarInst.destroy();
   const top8 = colors.slice(0, 8);
-  const metricKey = colorPriceMetricMode === 'discount' ? 'avg_disc' : 'avg_price';
+  const metricKey = colorPriceMetricMode === 'discount' ? 'avg_disc' : 'median_price';
   const chartTitle = document.getElementById('colorPriceMetricTitle');
   const chartSubtitle = document.getElementById('colorPriceMetricSubtitle');
-  if (chartTitle) chartTitle.textContent = colorPriceMetricMode === 'discount' ? 'Color-wise Average Discount' : 'Color-wise Average Price';
+  if (chartTitle) chartTitle.textContent = colorPriceMetricMode === 'discount' ? 'Color-wise Average Discount' : 'Color-wise Median Price';
   if (chartSubtitle) chartSubtitle.textContent = colorPriceMetricMode === 'discount'
     ? 'Average discount percentage by color'
-    : 'Average selling price by color';
+    : 'Median selling price by color';
 
   colorAvgPriceBarInst = new Chart(priceCtx, {
     type: 'bar',
@@ -6738,7 +6682,7 @@ function renderCategoryIntelData(data) {
           <td style="font-weight:700; color:#0f172a;">${escapeHtml(f.fabric)}</td>
           <td style="text-align:right; font-weight:600; color:#475569;">${f.products.toLocaleString()}</td>
           <td style="text-align:right; color:#64748b;">${f.share}</td>
-          <td style="text-align:right; font-weight:600; color:#0f172a;">${f.avg_price}</td>
+          <td style="text-align:right; font-weight:600; color:#0f172a;">${f.median_price || f.avg_price}</td>
         </tr>
       `).join('');
     }
@@ -7007,8 +6951,8 @@ async function loadFabricIntelligence(category = activeFabricIntel.category, gen
     setTxt('fabricKpiUniqueCount', displayCount(k.unique_fabrics));
     setTxt('fabricKpiTopName', displayValue(k.top_fabric));
     setTxt('fabricKpiTopShare', displayValue(k.top_fabric_share));
-    setTxt('fabricKpiAvgLabel', `AVG PRICE (${displayValue(k.top_fabric, 'TOP FABRIC').toUpperCase()})`);
-    setTxt('fabricKpiAvgPrice', displayValue(k.avg_price));
+    setTxt('fabricKpiAvgLabel', `MEDIAN PRICE (${displayValue(k.top_fabric, 'TOP FABRIC').toUpperCase()})`);
+    setTxt('fabricKpiAvgPrice', displayValue(k.median_price || k.avg_price));
     setTxt('fabricDistSubtitle', `Share of products by fabric type (${categoryLabel})`);
     renderFabricSidebarFromPayload(data.sidebar_counts || {});
     const linkEl = document.getElementById('fabricViewAllColorsLink');
@@ -7113,15 +7057,15 @@ async function loadFabricIntelligence(category = activeFabricIntel.category, gen
       }
     }
 
-    // 3. Average Price by Fabric Table
+    // 3. Median Price by Fabric Table
     const priceTbody = document.getElementById('fabricPriceTableBody');
     if (priceTbody) {
       const priceRows = data.average_price_by_fabric || [];
       priceTbody.innerHTML = priceRows.length ? priceRows.map(r => `
         <tr>
           <td style="font-weight:700; color:#0f172a;">${escapeHtml(r.fabric)}</td>
-          <td style="text-align:right; font-weight:600; color:#1e293b;">${r.mean}</td>
-          <td style="text-align:right; color:#475569;">${r.median}</td>
+          <td style="text-align:right; font-weight:600; color:#1e293b;">${r.median}</td>
+          <td style="text-align:right; color:#475569;">${r.mean}</td>
           <td style="text-align:right; color:#64748b;">${r.mode}</td>
         </tr>
       `).join('') : '<tr><td colspan="4" style="padding:14px; color:#94a3b8; text-align:center;">No price data for the selected fabric scope.</td></tr>';
@@ -8012,31 +7956,31 @@ async function loadPriceIntelligence() {
     const medianDelta = formatDeltaBadge(kpis.median_price_delta);
     const discountDelta = formatDeltaBadge(kpis.discounted_delta);
     if (document.getElementById('priceKpiAvg')) {
-      document.getElementById('priceKpiAvg').textContent = displayValue(kpis.avg_price_formatted);
+      document.getElementById('priceKpiAvg').textContent = displayValue(kpis.median_price_formatted);
     }
     const avgSubEl = document.getElementById('priceKpiAvgSub');
     if (avgSubEl) {
       avgSubEl.textContent = availability === 'low_stock'
-        ? 'Outlier-sensitive in low-stock slices'
-        : 'vs active comparison baseline';
+        ? 'Primary median signal for low-stock slices'
+        : 'Primary analytics price signal vs baseline';
     }
     if (document.getElementById('priceKpiAvgDelta')) {
-      document.getElementById('priceKpiAvgDelta').textContent = avgDelta.text;
-      document.getElementById('priceKpiAvgDelta').className = `intel-kpi-badge ${avgDelta.tone}`;
+      document.getElementById('priceKpiAvgDelta').textContent = medianDelta.text;
+      document.getElementById('priceKpiAvgDelta').className = `intel-kpi-badge ${medianDelta.tone}`;
     }
 
     if (document.getElementById('priceKpiMedian')) {
-      document.getElementById('priceKpiMedian').textContent = displayValue(kpis.median_price_formatted);
+      document.getElementById('priceKpiMedian').textContent = displayValue(kpis.avg_price_formatted);
     }
     const medianSubEl = document.getElementById('priceKpiMedianSub');
     if (medianSubEl) {
       medianSubEl.textContent = availability === 'low_stock'
-        ? 'Better signal when premium outliers distort averages'
-        : 'vs active comparison baseline';
+        ? 'Supporting mean read when stock mix is thin'
+        : 'Supporting context for outlier skew';
     }
     if (document.getElementById('priceKpiMedianDelta')) {
-      document.getElementById('priceKpiMedianDelta').textContent = medianDelta.text;
-      document.getElementById('priceKpiMedianDelta').className = `intel-kpi-badge ${medianDelta.tone}`;
+      document.getElementById('priceKpiMedianDelta').textContent = avgDelta.text;
+      document.getElementById('priceKpiMedianDelta').className = `intel-kpi-badge ${avgDelta.tone}`;
     }
 
     if (document.getElementById('priceKpiMode')) {
@@ -8128,13 +8072,13 @@ async function loadPriceIntelligence() {
       });
     }
 
-    // 3. Chart: Average Price Trend Line Chart
+    // 3. Chart: Median Price Trend Line Chart
     const trendCanvas = document.getElementById('chartPriceTrend');
     if (trendCanvas && window.Chart) {
       if (priceTrendChartInst) priceTrendChartInst.destroy();
       const pt = data.price_trend || {};
       if (document.getElementById('priceTrendBadge')) {
-        const priceTrendBadge = [displayValue(pt.latest_asp), displayValue(pt.delta_badge)]
+        const priceTrendBadge = [displayValue(pt.latest_median || pt.latest_asp), displayValue(pt.delta_badge)]
           .filter(part => part && part !== '-')
           .join(' ');
         document.getElementById('priceTrendBadge').textContent = priceTrendBadge || '-';
@@ -8210,10 +8154,11 @@ async function loadPriceIntelligence() {
             label: 'Brands',
             data: posData.map(b => ({
               x: b.product_count,
-              y: b.avg_price,
+              y: b.median_price ?? b.avg_price,
               r: b.radius,
               brand: b.brand,
-              discount: b.avg_discount
+              discount: b.avg_discount,
+              meanPrice: b.avg_price
             })),
             backgroundColor: 'rgba(15, 23, 42, 0.85)',
             hoverBackgroundColor: '#0f172a'
@@ -8228,7 +8173,7 @@ async function loadPriceIntelligence() {
               callbacks: {
                 label: (ctx) => {
                   const raw = ctx.raw;
-                  return `${raw.brand}: ${raw.x.toLocaleString()} products, ASP ₹${Math.round(raw.y).toLocaleString()} (${raw.discount}% off)`;
+                  return `${raw.brand}: ${raw.x.toLocaleString()} products, median ₹${Math.round(raw.y).toLocaleString()} (${raw.discount}% off, mean ₹${Math.round(raw.meanPrice || 0).toLocaleString()})`;
                 }
               }
             }
@@ -8240,7 +8185,7 @@ async function loadPriceIntelligence() {
               ticks: { font: { size: 9 }, color: '#94a3b8', callback: v => (v >= 1000 ? `${v/1000}K` : v) }
             },
             y: {
-              title: { display: true, text: 'Avg. Price (₹)', font: { size: 10, weight: '600' }, color: '#64748b' },
+              title: { display: true, text: 'Median Price (₹)', font: { size: 10, weight: '600' }, color: '#64748b' },
               grid: { color: '#f1f5f9' },
               ticks: { font: { size: 9 }, color: '#94a3b8', callback: v => (v >= 1000 ? `${v/1000}K` : v) }
             }
@@ -8257,8 +8202,8 @@ async function loadPriceIntelligence() {
         <tr>
           <td style="font-weight: 600; color: #0f172a;">${escapeHtml(f.fabric)}</td>
           <td style="text-align: right; color: #475569;">${f.products_formatted}</td>
-          <td style="text-align: right; font-weight: 600; color: #0f172a;">${f.avg_price_formatted}</td>
-          <td style="text-align: right; color: #475569;">${f.median_price_formatted}</td>
+          <td style="text-align: right; font-weight: 600; color: #0f172a;">${f.median_price_formatted}</td>
+          <td style="text-align: right; color: #475569;">${f.avg_price_formatted}</td>
         </tr>
       `).join('') : '<tr><td colspan="4" style="padding: 14px; text-align:center; color:#94a3b8;">No fabric pricing data for the current filters.</td></tr>';
     }
@@ -8276,8 +8221,8 @@ async function loadPriceIntelligence() {
             </div>
           </td>
           <td style="text-align: right; color: #475569;">${c.products_formatted}</td>
-          <td style="text-align: right; font-weight: 600; color: #0f172a;">${c.avg_price_formatted}</td>
-          <td style="text-align: right; color: #475569;">${c.median_price_formatted}</td>
+          <td style="text-align: right; font-weight: 600; color: #0f172a;">${c.median_price_formatted}</td>
+          <td style="text-align: right; color: #475569;">${c.avg_price_formatted}</td>
         </tr>
       `).join('') : '<tr><td colspan="4" style="padding: 14px; text-align:center; color:#94a3b8;">No color pricing data for the current filters.</td></tr>';
     }
@@ -8296,30 +8241,31 @@ async function loadPriceIntelligence() {
         return `
           <tr>
             <td style="font-weight: 600; color: #0f172a;">${escapeHtml(b.brand)}</td>
-            <td><div class="heatmap-cell" style="${getShade(b.b1_avg)}">${b.b1_avg}</div></td>
-            <td><div class="heatmap-cell" style="${getShade(b.b2_avg)}">${b.b2_avg}</div></td>
-            <td><div class="heatmap-cell" style="${getShade(b.b3_avg)}">${b.b3_avg}</div></td>
-            <td><div class="heatmap-cell" style="${getShade(b.b4_avg)}">${b.b4_avg}</div></td>
-            <td><div class="heatmap-cell" style="${getShade(b.b5_avg)}">${b.b5_avg}</div></td>
+            <td><div class="heatmap-cell" style="${getShade(b.b1_median)}">${b.b1_median}</div></td>
+            <td><div class="heatmap-cell" style="${getShade(b.b2_median)}">${b.b2_median}</div></td>
+            <td><div class="heatmap-cell" style="${getShade(b.b3_median)}">${b.b3_median}</div></td>
+            <td><div class="heatmap-cell" style="${getShade(b.b4_median)}">${b.b4_median}</div></td>
+            <td><div class="heatmap-cell" style="${getShade(b.b5_median)}">${b.b5_median}</div></td>
           </tr>
         `;
       }).join('') : '<tr><td colspan="6" style="padding: 14px; text-align:center; color:#94a3b8;">No heatmap data for the current filters.</td></tr>';
     }
 
-    // 8. Ranked List: Top 5 Brands by ASP
+    // 8. Ranked List: Top 5 Brands by Median Price
     const topAspList = document.getElementById('priceTopAspList');
     if (topAspList) {
       const topAsp = data.top_asp_brands || [];
-      const maxAsp = topAsp.length ? Math.max(...topAsp.map(a => a.avg_price)) : 1;
+      const maxAsp = topAsp.length ? Math.max(...topAsp.map(a => a.median_price || a.avg_price || 0)) : 1;
       topAspList.innerHTML = topAsp.length ? topAsp.map(a => {
-        const pct = Math.min(100, Math.round((a.avg_price / maxAsp) * 100));
+        const metricValue = a.median_price || a.avg_price || 0;
+        const pct = Math.min(100, Math.round((metricValue / maxAsp) * 100));
         return `
           <div class="intel-rank-row">
             <div class="intel-rank-name" title="${escapeHtml(a.brand)}">${escapeHtml(a.brand)}</div>
             <div class="intel-rank-bar-wrap">
               <div class="intel-rank-bar-fill" style="width: ${pct}%;"></div>
             </div>
-            <div class="intel-rank-val">${a.avg_price_formatted}</div>
+            <div class="intel-rank-val">${a.median_price_formatted || a.avg_price_formatted}</div>
           </div>
         `;
       }).join('') : '<div style="padding: 14px; color:#94a3b8; font-size:12px;">No premium price leaders in this scope.</div>';

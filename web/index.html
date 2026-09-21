@@ -33,6 +33,21 @@
         <span>Dashboard</span>
       </button>
 
+      <button class="nav-item" onclick="switchView('price-intel')" id="nav-price-intel">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z"/></svg>
+        <span>Price Intelligence</span>
+      </button>
+
+      <button class="nav-item" onclick="switchView('colors')" id="nav-colors">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L4.35 18.2c-.39.39-.39 1.02 0 1.41.39.39 1.02.39 1.41 0l.59-.59C7.93 20.26 9.88 21 12 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm0 16c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7zm-3.5-9c.83 0 1.5-.67 1.5-1.5S9.33 7 8.5 7 7 7.67 7 8.5 7.67 10 8.5 10zm7 0c.83 0 1.5-.67 1.5-1.5S16.33 7 15.5 7 14 7.67 14 8.5s.67 1.5 1.5 1.5zm-3.5 6c1.93 0 3.5-1.57 3.5-3.5h-7c0 1.93 1.57 3.5 3.5 3.5z"/></svg>
+        <span>Color Intelligence</span>
+      </button>
+
+      <button class="nav-item" onclick="switchView('fabric')" id="nav-fabric">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M19.5 3.5L18 2l-1.5 1.5L15 2l-1.5 1.5L12 2l-1.5 1.5L9 2 7.5 3.5 6 2 4.5 3.5 3 2v20l1.5-1.5L6 22l1.5-1.5L9 22l1.5-1.5L12 22l1.5-1.5L15 22l1.5-1.5L18 22l1.5-1.5L21 22V2l-1.5 1.5zM19 19.09H5V4.91h14v14.18zM6 6h12v2H6zm0 4h12v2H6zm0 4h8v2H6z"/></svg>
+        <span>Fabric Intelligence</span>
+      </button>
+
       <button class="nav-item" onclick="switchView('catalog')" id="nav-catalog">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M19 6h-2c0-2.76-2.24-5-5-5S7 3.24 7 6H5c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-7-3c1.66 0 3 1.34 3 3H9c0-1.66 1.34-3 3-3zm7 17H5V8h14v12zm-7-8c-1.66 0-3-1.34-3-3H7c0 2.76 2.24 5 5 5s5-2.24 5-5h-2c0 1.66-1.34 3-3 3z"/></svg>
         <span>Product Catalog</span>
@@ -52,21 +67,6 @@
       <button class="nav-item" onclick="switchView('category-analysis')" id="nav-category-analysis">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
         <span>Category Analysis</span>
-      </button>
-
-      <button class="nav-item" onclick="switchView('price-intel')" id="nav-price-intel">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z"/></svg>
-        <span>Price Intelligence</span>
-      </button>
-
-      <button class="nav-item" onclick="switchView('colors')" id="nav-colors">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L4.35 18.2c-.39.39-.39 1.02 0 1.41.39.39 1.02.39 1.41 0l.59-.59C7.93 20.26 9.88 21 12 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm0 16c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7zm-3.5-9c.83 0 1.5-.67 1.5-1.5S9.33 7 8.5 7 7 7.67 7 8.5 7.67 10 8.5 10zm7 0c.83 0 1.5-.67 1.5-1.5S16.33 7 15.5 7 14 7.67 14 8.5s.67 1.5 1.5 1.5zm-3.5 6c1.93 0 3.5-1.57 3.5-3.5h-7c0 1.93 1.57 3.5 3.5 3.5z"/></svg>
-        <span>Color Intelligence</span>
-      </button>
-
-      <button class="nav-item" onclick="switchView('fabric')" id="nav-fabric">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M19.5 3.5L18 2l-1.5 1.5L15 2l-1.5 1.5L12 2l-1.5 1.5L9 2 7.5 3.5 6 2 4.5 3.5 3 2v20l1.5-1.5L6 22l1.5-1.5L9 22l1.5-1.5L12 22l1.5-1.5L15 22l1.5-1.5L18 22l1.5-1.5L21 22V2l-1.5 1.5zM19 19.09H5V4.91h14v14.18zM6 6h12v2H6zm0 4h12v2H6zm0 4h8v2H6z"/></svg>
-        <span>Fabric & Material</span>
       </button>
 
       <button class="nav-item" onclick="switchView('insights')" id="nav-insights">
@@ -468,12 +468,12 @@
               </div>
               <button class="kpi-menu-dots" title="Options">⋮</button>
             </div>
-            <span class="kpi-label">MEAN SELLING PRICE</span>
+            <span class="kpi-label">MEDIAN SELLING PRICE</span>
             <div class="kpi-main">
               <span class="kpi-value" id="kpiMeanPrice">Loading...</span>
               <span class="kpi-trend positive" id="kpiTrendMeanPrice">--</span>
             </div>
-            <div class="kpi-sub" id="kpiMeanPriceSub">Calculating...</div>
+            <div class="kpi-sub" id="kpiMeanPriceSub">Calculating primary price signal...</div>
           </div>
 
           <div class="kpi-card">
@@ -483,12 +483,12 @@
               </div>
               <button class="kpi-menu-dots" title="Options">⋮</button>
             </div>
-            <span class="kpi-label">MEDIAN SELLING PRICE</span>
+            <span class="kpi-label">MEAN SELLING PRICE</span>
             <div class="kpi-main">
               <span class="kpi-value" id="kpiMedianPrice">Loading...</span>
               <span class="kpi-trend neutral" id="kpiTrendMedianPrice">Live</span>
             </div>
-            <div class="kpi-sub" id="kpiMedianPriceSub">Calculating...</div>
+            <div class="kpi-sub" id="kpiMedianPriceSub">Calculating supporting context...</div>
           </div>
 
           <div class="kpi-card">
@@ -627,22 +627,6 @@
             </div>
           </div>
 
-          <!-- Top Trending Brands -->
-          <div class="chart-card">
-            <div class="chart-card-header">
-              <div>
-                <h3 class="chart-title">Top Trending Brands</h3>
-                <span class="chart-desc">By recent demand momentum in the current analytics window</span>
-              </div>
-              <button class="btn-link-arrow" onclick="switchView('brands')">View All →</button>
-            </div>
-            <div class="chart-body">
-              <div class="trending-brands-list" id="trendingBrandsList">
-                <!-- Dynamically injected -->
-              </div>
-            </div>
-          </div>
-
           <!-- Inventory Heatmap Matrix -->
           <div class="chart-card">
             <div class="chart-card-header">
@@ -673,7 +657,7 @@
           </div>
         </div>
 
-        <!-- Charts Grid: Row 3 (Fabric, Color & Top 3 Best-Seller Products) -->
+        <!-- Charts Grid: Row 3 (Fabric & Color Intelligence) -->
         <div class="dash-charts-grid-3" style="margin-top: 24px;">
           <!-- 1. Fabric Intelligence Card -->
           <div class="chart-card">
@@ -707,21 +691,6 @@
             </div>
           </div>
 
-          <!-- 3. Top 3 Featured Best-Sellers Card -->
-          <div class="chart-card">
-            <div class="chart-card-header">
-              <div>
-                <h3 class="chart-title">🔥 Top 3 Best-Sellers</h3>
-                <span class="chart-desc">Highest rated & demanded catalog styles</span>
-              </div>
-              <button class="btn-link-arrow" onclick="switchView('catalog')">View All →</button>
-            </div>
-            <div class="chart-body" style="padding: 14px;">
-              <div id="dashboardTop3ProductsList" style="display: flex; flex-direction: column; gap: 12px;">
-                <!-- Dynamically injected by JS -->
-              </div>
-            </div>
-          </div>
         </div>
 
         <!-- AI Insights Cards: Row 3 -->
@@ -742,25 +711,25 @@
           </div>
         </div>
 
-        <!-- CTO Executive Analytics Row: Mean/Median/Mode & Brand Valuation Matrix -->
+        <!-- CTO Executive Analytics Row: Median-led Pricing & Brand Valuation Matrix -->
         <div class="cto-analytics-section" style="margin-top: 24px;">
           <div class="dash-charts-grid-3" style="grid-template-columns: 1fr 1fr 1.5fr;">
-            <!-- Card 1: Mean, Median, Mode Pricing -->
+            <!-- Card 1: Median-led Pricing -->
             <div class="chart-card">
               <div class="chart-card-header">
                 <div>
-                  <h3 class="chart-title">Mean vs Median Price Intelligence</h3>
-                  <span class="chart-desc">Pricing distribution & mode indicators</span>
+                  <h3 class="chart-title">Median-led Price Intelligence</h3>
+                  <span class="chart-desc">Median-first pricing distribution with supporting mean and mode</span>
                 </div>
               </div>
               <div class="chart-body" style="padding: 16px; display: flex; flex-direction: column; gap: 14px;">
                 <div class="cto-metric-row">
-                  <span class="cto-m-label">MEAN SELLING PRICE</span>
-                  <span class="cto-m-val" id="ctoMeanPriceVal">--</span>
-                </div>
-                <div class="cto-metric-row">
                   <span class="cto-m-label">MEDIAN SELLING PRICE</span>
                   <span class="cto-m-val highlight" id="ctoMedianPriceVal">--</span>
+                </div>
+                <div class="cto-metric-row">
+                  <span class="cto-m-label">MEAN SELLING PRICE</span>
+                  <span class="cto-m-val" id="ctoMeanPriceVal">--</span>
                 </div>
                 <div class="cto-metric-row">
                   <span class="cto-m-label">MODE PRICE POINT (MOST COMMON)</span>
@@ -813,7 +782,7 @@
               <div class="chart-card-header">
                 <div>
                   <h3 class="chart-title">Top Brands Inventory Valuation Matrix</h3>
-                  <span class="chart-desc">Inventory valuation, ASP & GMV revenue</span>
+                  <span class="chart-desc">Inventory valuation, median price and GMV revenue</span>
                 </div>
               </div>
               <div class="chart-body" style="padding: 0; max-height: 260px; overflow-y: auto;">
@@ -824,7 +793,7 @@
                       <th>Brand</th>
                       <th>Scale</th>
                       <th>SKUs</th>
-                      <th>Mean / Median</th>
+                      <th>Median / Mean</th>
                       <th>Valuation (₹)</th>
                     </tr>
                   </thead>
@@ -1999,9 +1968,9 @@
                   <div class="intel-kpi-icon"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z"/></svg></div>
                   <span class="intel-kpi-badge neutral" id="priceKpiAvgDelta">-</span>
                 </div>
-                <div class="intel-kpi-label">AVERAGE PRICE</div>
+                <div class="intel-kpi-label">MEDIAN PRICE</div>
                 <div class="intel-kpi-val" id="priceKpiAvg">-</div>
-                <div class="intel-kpi-sub" id="priceKpiAvgSub">vs active comparison baseline</div>
+                <div class="intel-kpi-sub" id="priceKpiAvgSub">Primary analytics price signal</div>
               </div>
 
               <div class="intel-kpi-card">
@@ -2009,9 +1978,9 @@
                   <div class="intel-kpi-icon"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M3 3v18h18V3H3zm16 16H5V5h14v14zM11 7h2v10h-2V7zm-4 4h2v6H7v-6zm8-2h2v8h-2V9z"/></svg></div>
                   <span class="intel-kpi-badge neutral" id="priceKpiMedianDelta">-</span>
                 </div>
-                <div class="intel-kpi-label">MEDIAN PRICE</div>
+                <div class="intel-kpi-label">MEAN PRICE</div>
                 <div class="intel-kpi-val" id="priceKpiMedian">-</div>
-                <div class="intel-kpi-sub" id="priceKpiMedianSub">vs active comparison baseline</div>
+                <div class="intel-kpi-sub" id="priceKpiMedianSub">Supporting context for outlier skew</div>
               </div>
 
               <div class="intel-kpi-card">
@@ -2060,12 +2029,12 @@
                 </div>
               </div>
 
-              <!-- Average Price Trend Line Chart -->
+              <!-- Median Price Trend Line Chart -->
               <div class="intel-card" id="priceTrendCard">
                 <div class="intel-card-header">
                   <div>
-                    <h3 class="intel-card-title">Average Price Trend</h3>
-                    <div class="intel-card-subtitle">Category average price over time</div>
+                    <h3 class="intel-card-title">Median Price Trend</h3>
+                    <div class="intel-card-subtitle">Category median price over time</div>
                   </div>
                   <div style="display: flex; align-items: center; gap: 8px;">
                     <span class="intel-trend-badge" id="priceTrendBadge">-</span>
@@ -2082,7 +2051,7 @@
                 <div class="intel-card-header">
                   <div>
                     <h3 class="intel-card-title">Price Positioning (Brand Comparison)</h3>
-                    <div class="intel-card-subtitle">Average price vs product count (bubble size)</div>
+                    <div class="intel-card-subtitle">Median price vs product count (bubble size)</div>
                   </div>
                   <a href="javascript:void(0)" class="intel-link-view" onclick="switchPriceIntelSection('brand-comparison')">View Details →</a>
                 </div>
@@ -2099,7 +2068,7 @@
                 <div class="intel-card-header">
                   <div>
                     <h3 class="intel-card-title">Price by Fabric</h3>
-                    <div class="intel-card-subtitle">Average and median price by fabric type</div>
+                    <div class="intel-card-subtitle">Median price by fabric type with mean as supporting context</div>
                   </div>
                   <a href="javascript:void(0)" class="intel-link-view" onclick="switchPriceIntelSection('fabric')">View All →</a>
                 </div>
@@ -2109,8 +2078,8 @@
                       <tr>
                         <th>Fabric</th>
                         <th style="text-align: right;">Products</th>
-                        <th style="text-align: right;">Avg. Price (₹)</th>
                         <th style="text-align: right;">Median (₹)</th>
+                        <th style="text-align: right;">Mean (₹)</th>
                       </tr>
                     </thead>
                     <tbody id="priceByFabricTbody">
@@ -2125,7 +2094,7 @@
                 <div class="intel-card-header">
                   <div>
                     <h3 class="intel-card-title">Price by Color</h3>
-                    <div class="intel-card-subtitle">Average price and product count by color</div>
+                    <div class="intel-card-subtitle">Median price and product count by color</div>
                   </div>
                   <a href="javascript:void(0)" class="intel-link-view" onclick="switchPriceIntelSection('color')">View All →</a>
                 </div>
@@ -2135,8 +2104,8 @@
                       <tr>
                         <th>Color</th>
                         <th style="text-align: right;">Products</th>
-                        <th style="text-align: right;">Avg. Price (₹)</th>
                         <th style="text-align: right;">Median (₹)</th>
+                        <th style="text-align: right;">Mean (₹)</th>
                       </tr>
                     </thead>
                     <tbody id="priceByColorTbody">
@@ -2151,7 +2120,7 @@
                 <div class="intel-card-header">
                   <div>
                     <h3 class="intel-card-title">Price Heatmap</h3>
-                    <div class="intel-card-subtitle">Average price (₹) by brand and price range</div>
+                    <div class="intel-card-subtitle">Median price (₹) by brand and price range</div>
                   </div>
                   <a href="javascript:void(0)" class="intel-link-view" onclick="switchPriceIntelSection('distribution')">View All →</a>
                 </div>
@@ -2177,11 +2146,11 @@
 
             <!-- Row 4: Top 5 Bars and Opportunities (3 Columns) -->
             <div class="intel-grid-3col">
-              <!-- Top 5 Brands by ASP -->
+              <!-- Top 5 Brands by Median Price -->
               <div class="intel-card" id="priceTopAspCard">
                 <div class="intel-card-header">
                   <div>
-                    <h3 class="intel-card-title">Top 5 Brands by Average Price</h3>
+                    <h3 class="intel-card-title">Top 5 Brands by Median Price</h3>
                   </div>
                 </div>
                 <div class="intel-rank-list" id="priceTopAspList">
@@ -2432,12 +2401,12 @@
                 </div>
               </div>
 
-              <!-- Card 3: Color-wise Average Price -->
+              <!-- Card 3: Color-wise Median Price -->
               <div class="chart-card" id="colorPriceCard" style="background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:18px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                   <div>
-                    <h3 id="colorPriceMetricTitle" style="font-size:13px; font-weight:800; color:#0f172a; margin:0;">Color-wise Average Price</h3>
-                    <p id="colorPriceMetricSubtitle" style="font-size:11px; color:#64748b; margin:2px 0 0 0;">Average selling price by color</p>
+                    <h3 id="colorPriceMetricTitle" style="font-size:13px; font-weight:800; color:#0f172a; margin:0;">Color-wise Median Price</h3>
+                    <p id="colorPriceMetricSubtitle" style="font-size:11px; color:#64748b; margin:2px 0 0 0;">Median selling price by color</p>
                   </div>
                   <div style="display:flex; gap:4px; background:#f1f5f9; padding:2px; border-radius:4px;">
                     <button id="colorMetricPriceBtn" onclick="setColorPriceMetric('price', this)" style="font-size:10px; font-weight:700; padding:2px 6px; border:none; background:#0f172a; color:#fff; border-radius:3px; cursor:pointer;">₹</button>
@@ -3094,7 +3063,7 @@
                         <th>BRAND</th>
                         <th style="text-align: right;">PRODUCTS</th>
                         <th style="text-align: right;">SHARE</th>
-                        <th style="text-align: right;">AVG PRICE</th>
+                        <th style="text-align: right;">MEDIAN PRICE</th>
                       </tr>
                     </thead>
                     <tbody id="catTopBrandsTableBody">
@@ -3142,7 +3111,7 @@
                         <th>FABRIC</th>
                         <th style="text-align: right;">PRODUCTS</th>
                         <th style="text-align: right;">SHARE</th>
-                        <th style="text-align: right;">AVG PRICE</th>
+                        <th style="text-align: right;">MEDIAN PRICE</th>
                       </tr>
                     </thead>
                     <tbody id="catTopFabricsTableBody">
@@ -3456,10 +3425,10 @@
               <div class="intel-kpi-card">
                 <div class="kpi-icon-box"><svg viewBox="0 0 24 24" width="18" height="18" fill="#0f172a"><path d="M21.41 11.58l-9-9C12.05 2.22 11.55 2 11 2H4c-1.1 0-2 .9-2 2v7c0 .55.22 1.05.59 1.42l9 9c.36.36.86.58 1.41.58.55 0 1.05-.22 1.41-.59l7-7c.37-.36.59-.86.59-1.41 0-.55-.23-1.06-.59-1.42z"/></svg></div>
                 <div class="kpi-content">
-                  <span class="kpi-label" id="fabricKpiAvgLabel">AVG PRICE (COTTON)</span>
+                  <span class="kpi-label" id="fabricKpiAvgLabel">MEDIAN PRICE (COTTON)</span>
                   <div class="kpi-value-row">
                     <span class="kpi-val" id="fabricKpiAvgPrice">-</span>
-                    <span class="kpi-badge">Live filtered average</span>
+                    <span class="kpi-badge">Live filtered median</span>
                   </div>
                   <span class="kpi-subtext">Based on current selection</span>
                 </div>
@@ -3508,12 +3477,12 @@
                 </div>
               </div>
 
-              <!-- Card 3: Average Price by Fabric Table -->
+              <!-- Card 3: Median Price by Fabric Table -->
               <div class="intel-card">
                 <div class="intel-card-header">
                   <div>
-                    <h3 class="intel-card-title">Average Price by Fabric</h3>
-                    <p class="intel-card-subtitle">Mean, median and mode price (₹)</p>
+                    <h3 class="intel-card-title">Median Price by Fabric</h3>
+                    <p class="intel-card-subtitle">Median-first pricing with mean and mode context (₹)</p>
                   </div>
                 </div>
                 <div class="intel-table-wrap">
@@ -3521,8 +3490,8 @@
                     <thead>
                       <tr>
                         <th>FABRIC</th>
-                        <th style="text-align: right;">MEAN</th>
                         <th style="text-align: right;">MEDIAN</th>
+                        <th style="text-align: right;">MEAN</th>
                         <th style="text-align: right;">MODE</th>
                       </tr>
                     </thead>
@@ -4159,12 +4128,12 @@
             </div>
           </div>
 
-          <!-- Chart 2: Average Selling Price -->
+          <!-- Chart 2: Median Selling Price -->
           <div class="comparator-chart-card">
             <div class="chart-card-header">
               <div>
-                <h4 class="chart-card-title">Average Selling Price</h4>
-                <p class="chart-card-sub">Avg. price across products</p>
+                <h4 class="chart-card-title">Median Selling Price</h4>
+                <p class="chart-card-sub">Median price across products</p>
               </div>
               <button class="btn-card-dots" title="Options">•••</button>
             </div>
