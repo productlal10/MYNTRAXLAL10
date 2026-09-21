@@ -5840,7 +5840,7 @@ def get_brands_intelligence():
     availability = request.args.get("availability", "").strip()
     new_arrivals = request.args.get("new_arrivals", "").strip()
 
-    cache_key = f"brands_intel_v6:{category.lower()}:{gender.lower()}:{subcategory}:{price_min}:{price_max}:{price_ranges}:{brand_size}:{brand_type}:{brand}:{color}:{fabric}:{fit}:{discount_min}:{rating_min}:{availability}:{new_arrivals}"
+    cache_key = f"brands_intel_v7:{category.lower()}:{gender.lower()}:{subcategory}:{price_min}:{price_max}:{price_ranges}:{brand_size}:{brand_type}:{brand}:{color}:{fabric}:{fit}:{discount_min}:{rating_min}:{availability}:{new_arrivals}"
     cached = _load_shared_cache(cache_key)
     if cached is not None:
         api_cache.set(cache_key, cached, ttl=300.0)
@@ -5867,12 +5867,6 @@ def get_brands_intelligence():
         "availability": availability,
         "new_arrivals": new_arrivals
     }
-
-    sidebar_cache_key = f"sb_scope_v1:{cache_key}"
-    sb_data = api_cache.get(sidebar_cache_key)
-    if not sb_data:
-        sb_data = _build_scope_sidebar_counts(cur, scope_filters)
-        api_cache.set(sidebar_cache_key, sb_data, ttl=180.0)
 
     # 1. Active filtered query
     active_where_sql, active_params = _build_catalog_filters(
@@ -5904,6 +5898,7 @@ def get_brands_intelligence():
             ROUND(AVG(p.discount_percentage), 1) as avg_disc,
             SUM(CASE WHEN p.selling_price < 500 THEN 1 ELSE 0 END) as p_lt_500,
             SUM(CASE WHEN p.selling_price >= 500 AND p.selling_price < 1000 THEN 1 ELSE 0 END) as p_500_1k,
+            SUM(CASE WHEN p.selling_price >= 800 AND p.selling_price <= 1000 THEN 1 ELSE 0 END) as p_800_1k,
             SUM(CASE WHEN p.selling_price >= 1000 AND p.selling_price < 2000 THEN 1 ELSE 0 END) as p_1k_2k,
             SUM(CASE WHEN p.selling_price >= 2000 AND p.selling_price < 3000 THEN 1 ELSE 0 END) as p_2k_3k,
             SUM(CASE WHEN p.selling_price >= 3000 AND p.selling_price < 4000 THEN 1 ELSE 0 END) as p_3k_4k,
@@ -5918,6 +5913,7 @@ def get_brands_intelligence():
 
     p_lt_500 = int(k_row["p_lt_500"] or 0)
     p_500_1k = int(k_row["p_500_1k"] or 0)
+    p_800_1k = int(k_row["p_800_1k"] or 0)
     p_1k_2k = int(k_row["p_1k_2k"] or 0)
     p_2k_3k = int(k_row["p_2k_3k"] or 0)
     p_3k_4k = int(k_row["p_3k_4k"] or 0)
@@ -5949,6 +5945,23 @@ def get_brands_intelligence():
         or bool(scope_filters["availability"])
         or bool(scope_filters["new_arrivals"])
     )
+
+    is_default_scope = not any([
+        bool(scope_filters["subcategory"] and scope_filters["subcategory"] != "all"),
+        bool(scope_filters["price_min"]),
+        bool(scope_filters["price_max"]),
+        bool(scope_filters["price_ranges"]),
+        bool(scope_filters["brand_size"]),
+        bool(scope_filters["brand_type"]),
+        bool(scope_filters["brand"]),
+        bool(scope_filters["color"]),
+        bool(scope_filters["fabric"]),
+        bool(scope_filters["fit"]),
+        bool(scope_filters["discount_min"]),
+        bool(scope_filters["rating_min"]),
+        bool(scope_filters["availability"]),
+        bool(scope_filters["new_arrivals"])
+    ])
 
     if use_exact_price_shape:
         cur.execute(f"""
@@ -6144,7 +6157,7 @@ def get_brands_intelligence():
         WHERE {active_where_sql} AND p.fabric IS NOT NULL AND p.fabric != ''
         GROUP BY clean_f
         ORDER BY cnt DESC
-        LIMIT 7;
+        LIMIT 8;
     """, active_params)
     f_rows = cur.fetchall()
     top_fabrics = [{"fabric": r["clean_f"], "count": int(r["cnt"]), "share": f"{round(int(r['cnt']) / max(1, total_prods) * 100, 1)}%"} for r in f_rows]
@@ -6156,7 +6169,7 @@ def get_brands_intelligence():
         WHERE {active_where_sql} AND {_valid_color_sql("p.primary_color")}
         GROUP BY p.primary_color, p.color_hex
         ORDER BY cnt DESC
-        LIMIT 7;
+        LIMIT 12;
     """, active_params)
     c_rows = cur.fetchall()
     top_colors = [{
@@ -6173,16 +6186,76 @@ def get_brands_intelligence():
         WHERE {active_where_sql} AND p.fit IS NOT NULL AND p.fit != '' AND p.fit != 'NA'
         GROUP BY p.fit
         ORDER BY fit_cnt DESC
-        LIMIT 6;
+        LIMIT 8;
     """, active_params)
     fit_rows = cur.fetchall()
     top_fits = [{"fit": r["fit"], "count": int(r["fit_cnt"])} for r in fit_rows]
+
+    sidebar_cache_key = f"sb_scope_v1:{cache_key}"
+    sb_data = api_cache.get(sidebar_cache_key)
+    if not sb_data:
+        if is_default_scope:
+            subcat_where_sql, subcat_params = _build_catalog_filters(
+                category=scope_filters["category"],
+                gender=scope_filters["gender"],
+                price_min=scope_filters["price_min"],
+                price_max=scope_filters["price_max"],
+                price_ranges=scope_filters["price_ranges"],
+                brand_size=scope_filters["brand_size"],
+                brand_type=scope_filters["brand_type"],
+                subcategory=None,
+                brand=scope_filters["brand"],
+                color=scope_filters["color"],
+                fabric=scope_filters["fabric"],
+                fit=scope_filters["fit"],
+                discount_min=scope_filters["discount_min"],
+                rating_min=scope_filters["rating_min"],
+                availability=scope_filters["availability"],
+                new_arrivals=scope_filters["new_arrivals"]
+            )
+            sb_data = {
+                "price_ranges": {
+                    "lt_500": p_lt_500,
+                    "500_1000": p_500_1k,
+                    "800_1000": p_800_1k,
+                    "1000_2000": p_1k_2k,
+                    "2000_3000": p_2k_3k,
+                    "3000_4000": p_3k_4k,
+                    "gt_4000": p_gt_4k
+                },
+                "brand_sizes": {
+                    "large": len(large_b),
+                    "mid": len(mid_b),
+                    "small": len(small_b)
+                },
+                "subcategories": _subcategory_facets(cur, subcat_where_sql, subcat_params, scope_filters.get("category") or "all"),
+                "available_filters": {
+                    "brands": [{"brand": r["brand"], "count": int(r["cnt"] or 0)} for r in all_b_rows[:50]],
+                    "colors": [{
+                        "color": color["color"],
+                        "hex": color["hex"],
+                        "count": int(color["count"] or 0)
+                    } for color in top_colors[:12]],
+                    "fabrics": [{"fabric": fabric_row["fabric"], "count": int(fabric_row["count"] or 0)} for fabric_row in top_fabrics[:8]],
+                    "fits": [{"fit": fit_row["fit"], "count": int(fit_row["count"] or 0)} for fit_row in top_fits[:8]]
+                }
+            }
+        else:
+            sb_data = _build_scope_sidebar_counts(cur, scope_filters)
+        api_cache.set(sidebar_cache_key, sb_data, ttl=180.0)
 
     # 6. Top 5 representative products with recent sales/rating scoring and title de-duplication
     latest_sales_date = _latest_sales_date(cur)
     prod_rows = []
     sales_window_days = 9
-    if latest_sales_date:
+    use_sales_ranked_products = (
+        latest_sales_date is not None
+        and (
+            total_prods <= 50000
+            or not is_default_scope
+        )
+    )
+    if use_sales_ranked_products:
         sales_window_start = latest_sales_date - timedelta(days=sales_window_days - 1)
         cur.execute(f"""
             WITH product_scores AS (
@@ -6307,6 +6380,12 @@ def get_brands_intelligence():
 
     scope_label = _scope_display_label(category, subcategory)
 
+    top_products_note = (
+        "Ranked using recent sales telemetry first, then ratings and stock coverage."
+        if use_sales_ranked_products else
+        "Ranked using product ratings and stock coverage for faster broad-scope loading."
+    )
+
     result = {
         "status": "success",
         "category": category.title(),
@@ -6346,7 +6425,7 @@ def get_brands_intelligence():
             {"tier": f"Small ({len(small_b)} brands)", "median_price": small_med}
         ],
         "top_products": top_products,
-        "top_products_note": "Ranked using recent sales telemetry first, then ratings and stock coverage.",
+        "top_products_note": top_products_note,
         "subcategories": sb_data.get("subcategories", [])
     }
     api_cache.set(cache_key, result, ttl=300.0)
