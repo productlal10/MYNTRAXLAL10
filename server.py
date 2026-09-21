@@ -2016,7 +2016,10 @@ def get_insights():
             COUNT(*) AS sku_count,
             ROUND(AVG(COALESCE(p.selling_price, 0)), 1) AS mean_price,
             ROUND(AVG(COALESCE(p.mrp, 0)), 1) AS mean_mrp,
-            ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY COALESCE(p.selling_price, 0)), 1) AS median_price
+            ROUND(
+                (PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY COALESCE(p.selling_price, 0)))::numeric,
+                1
+            ) AS median_price
         FROM products p
         WHERE {where_sql}
           AND p.brand IS NOT NULL
@@ -6009,7 +6012,7 @@ def get_brands_intelligence():
     if use_exact_price_shape:
         cur.execute(f"""
             SELECT
-                ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY p.selling_price)),
+                ROUND((PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY p.selling_price))::numeric),
                 COALESCE(MODE() WITHIN GROUP (ORDER BY ROUND(p.selling_price)), ROUND(AVG(p.selling_price)))
             FROM products p
             WHERE {active_where_sql} AND p.selling_price > 0;
