@@ -1631,7 +1631,7 @@ def get_insights():
     filter_price_max = filters["price_max"]
     filter_sort_by = filters["sort_by"]
 
-    cache_key = f"insights_v4:{filter_category}:{filter_gender}:{filter_subcategory}:{filter_brand}:{filter_brand_type}:{filter_brand_scale}:{filter_price_min}:{filter_price_max}:{filter_sort_by}"
+    cache_key = f"insights_v5:{filter_category}:{filter_gender}:{filter_subcategory}:{filter_brand}:{filter_brand_type}:{filter_brand_scale}:{filter_price_min}:{filter_price_max}:{filter_sort_by}"
     cached_payload = _load_shared_cache(cache_key)
     if cached_payload is not None:
         api_cache.set(cache_key, cached_payload, ttl=600.0)
