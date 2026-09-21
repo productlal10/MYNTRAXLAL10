@@ -38,6 +38,15 @@ function formatCurrencyCompactIN(value, fallback = '—') {
   return `₹${Math.round(num).toLocaleString('en-IN')}`;
 }
 
+function formatCountCompactIN(value, fallback = '—') {
+  const num = toNumberOrNull(value);
+  if (num === null) return fallback;
+  if (num >= 10000000) return `${(num / 10000000).toFixed(2)} Cr`;
+  if (num >= 100000) return `${(num / 100000).toFixed(2)} L`;
+  if (num >= 1000) return `${(num / 1000).toFixed(1)} K`;
+  return Math.round(num).toLocaleString('en-IN');
+}
+
 function formatDateLabel(value, fallback = '—') {
   if (!value) return fallback;
   const date = new Date(value);
@@ -936,9 +945,9 @@ function renderCTOPricingMetrics(insights) {
   setTxt('ctoIqrPriceVal', (p.p25_price > 0 && p.p75_price > 0) ? `₹${Math.round(p.p25_price).toLocaleString()} – ₹${Math.round(p.p75_price).toLocaleString()}` : '₹0 – ₹0');
   setTxt(
     'ctoPriceScopeMeta',
-    p.mean_price > 0 || p.median_price > 0
-      ? `Scope median ${p.median_price > 0 ? `₹${Math.round(p.median_price).toLocaleString('en-IN')}` : '—'} | mean ${p.mean_price > 0 ? `₹${Math.round(p.mean_price).toLocaleString('en-IN')}` : '—'}`
-      : 'Scope median — | mean —'
+    p.median_price > 0
+      ? `Scope median ₹${Math.round(p.median_price).toLocaleString('en-IN')}`
+      : 'Scope median —'
   );
 }
 
@@ -1682,25 +1691,50 @@ function renderPriceBandBar(insights) {
   });
 }
 
-// Warehouse Logistics & Seller Hubs List
+// Warehouse Stock Summary
 function renderGeographicDemand(insights) {
   const listEl = document.getElementById('geoDemandList');
   if (!listEl) return;
 
-  const hubs = Array.isArray(insights.geographic_demand) ? insights.geographic_demand.slice(0, 5) : [];
+  const totalProducts = Number(insights.total_products || 0);
+  const inStockProducts = Number(insights.in_stock_products || 0);
+  const totalUnits = Number(insights.total_warehouse_units || 0);
+  const outOfStockProducts = Math.max(0, totalProducts - inStockProducts);
+  const inStockPct = totalProducts > 0 ? ((inStockProducts / totalProducts) * 100) : 0;
+  const outOfStockPct = totalProducts > 0 ? ((outOfStockProducts / totalProducts) * 100) : 0;
+  const avgUnitsPerSku = totalProducts > 0 && totalUnits > 0 ? Math.round(totalUnits / totalProducts) : 0;
 
-  if (hubs.length === 0) {
-    listEl.innerHTML = '<div style="padding:12px;color:#94a3b8;font-size:12px;text-align:center;">Warehouse location percentages are not connected yet, so this section stays empty instead of inferring fake regional splits.</div>';
+  const warehouseFacts = [
+    {
+      label: 'Total Warehouse Units',
+      value: totalUnits > 0 ? formatCountCompactIN(totalUnits) : '—'
+    },
+    {
+      label: 'In-Stock Coverage',
+      value: totalProducts > 0 ? `${inStockPct.toFixed(1)}%` : '—'
+    },
+    {
+      label: 'Avg Units Per SKU',
+      value: avgUnitsPerSku > 0 ? avgUnitsPerSku.toLocaleString('en-IN') : '—'
+    },
+    {
+      label: 'Out-of-Stock Share',
+      value: totalProducts > 0 ? `${outOfStockPct.toFixed(1)}%` : '—'
+    }
+  ].filter(item => item.value !== '—');
+
+  if (!warehouseFacts.length) {
+    listEl.innerHTML = '<div style="padding:12px;color:#94a3b8;font-size:12px;text-align:center;">Live warehouse stock metrics are not available for this scope yet.</div>';
     return;
   }
 
-  listEl.innerHTML = hubs.map(c => `
+  listEl.innerHTML = warehouseFacts.map((item, index) => `
     <div class="geo-rank-item">
       <div class="geo-rank-left">
-        <span class="geo-num">${c.rank}</span>
-        <span class="geo-city">${escapeHtml(c.city || c.location || 'Warehouse')}</span>
+        <span class="geo-num">${index + 1}</span>
+        <span class="geo-city">${escapeHtml(item.label)}</span>
       </div>
-      <span class="geo-share">${c.share}%</span>
+      <span class="geo-share">${escapeHtml(item.value)}</span>
     </div>
   `).join('');
 }
