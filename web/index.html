@@ -572,56 +572,30 @@
 
         <!-- Charts Grid: Row 2 -->
         <div class="dash-charts-grid-3">
-          <!-- Geographic Warehouse & Seller Hubs -->
+          <!-- Price Positioning Bubble Chart -->
           <div class="chart-card">
             <div class="chart-card-header">
               <div>
-                <h3 class="chart-title">Regional Demand Hotspots</h3>
-                <span class="chart-desc">Estimated regional demand concentration from the current catalog mix</span>
+                <h3 class="chart-title">Price Positioning (Brand Comparison)</h3>
+                <span class="chart-desc">Median price vs product count (bubble size)</span>
               </div>
-              <button class="btn-link-arrow" onclick="switchView('category-analysis')">View All →</button>
+              <button class="btn-link-arrow" onclick="switchView('price-intel')">View All →</button>
             </div>
-            <div class="chart-body geo-demand-body" style="display: flex; gap: 16px; align-items: center;">
-              <div class="india-map-vector" style="position: relative; flex-shrink: 0;">
-                 <div style="position:relative; width:170px; height:210px;">
-                   <img src="assets/india_map.png" alt="India Map" style="width:170px; height:210px; object-fit:contain; filter: drop-shadow(0 4px 12px rgba(15,23,42,0.10));"/>
-                   <!-- Glowing Warehouse Hub Markers overlaid on real map -->
-                   <svg viewBox="0 0 170 210" width="170" height="210" style="position:absolute;top:0;left:0;pointer-events:none;">
-                     <defs>
-                       <radialGradient id="hubGlowRed" cx="50%" cy="50%" r="50%">
-                         <stop offset="0%" stop-color="#ef4444" stop-opacity="0.9"/>
-                         <stop offset="100%" stop-color="#ef4444" stop-opacity="0"/>
-                       </radialGradient>
-                       <radialGradient id="hubGlowDark" cx="50%" cy="50%" r="50%">
-                         <stop offset="0%" stop-color="#0f172a" stop-opacity="0.85"/>
-                         <stop offset="100%" stop-color="#0f172a" stop-opacity="0"/>
-                       </radialGradient>
-                     </defs>
-                     <!-- Delhi NCR -->
-                     <circle cx="72" cy="52" r="10" fill="url(#hubGlowRed)" />
-                     <circle cx="72" cy="52" r="4" fill="#ef4444" stroke="#ffffff" stroke-width="1.5" />
-                     <!-- Bengaluru -->
-                     <circle cx="76" cy="168" r="11" fill="url(#hubGlowRed)" />
-                     <circle cx="76" cy="168" r="4.5" fill="#ef4444" stroke="#ffffff" stroke-width="1.5" />
-                     <!-- Mumbai -->
-                     <circle cx="50" cy="118" r="10" fill="url(#hubGlowDark)" />
-                     <circle cx="50" cy="118" r="4" fill="#0f172a" stroke="#ffffff" stroke-width="1.5" />
-                     <!-- Hyderabad -->
-                     <circle cx="83" cy="137" r="8" fill="url(#hubGlowDark)" />
-                     <circle cx="83" cy="137" r="3.5" fill="#0f172a" stroke="#ffffff" stroke-width="1.2" />
-                     <!-- Chennai -->
-                     <circle cx="90" cy="173" r="8" fill="url(#hubGlowDark)" />
-                     <circle cx="90" cy="173" r="3" fill="#0f172a" stroke="#ffffff" stroke-width="1.2" />
-                     <!-- Kolkata -->
-                     <circle cx="118" cy="100" r="8" fill="url(#hubGlowDark)" />
-                     <circle cx="118" cy="100" r="3" fill="#64748b" stroke="#ffffff" stroke-width="1" />
-                     <!-- Surat -->
-                     <circle cx="42" cy="97" r="7" fill="url(#hubGlowDark)" />
-                     <circle cx="42" cy="97" r="3" fill="#64748b" stroke="#ffffff" stroke-width="1" />
-                   </svg>
-                 </div>
+            <div class="chart-body">
+              <canvas id="dashboardPricePositioningChart"></canvas>
+            </div>
+          </div>
+
+          <!-- Warehouse Location Share -->
+          <div class="chart-card">
+            <div class="chart-card-header">
+              <div>
+                <h3 class="chart-title">Warehouse Location Share</h3>
+                <span class="chart-desc">Connected warehouse location percentages for the current catalog scope</span>
               </div>
-              <div class="geo-rank-list" id="geoDemandList" style="flex: 1;">
+            </div>
+            <div class="chart-body" style="padding: 16px;">
+              <div class="geo-rank-list" id="geoDemandList">
                 <!-- Dynamically injected -->
               </div>
             </div>
@@ -779,22 +753,22 @@
 
             <!-- Card 3: Brand Inventory Valuation & Revenue Matrix -->
             <div class="chart-card">
-              <div class="chart-card-header">
-                <div>
-                  <h3 class="chart-title">Top Brands Inventory Valuation Matrix</h3>
-                  <span class="chart-desc">Inventory valuation, median price and GMV revenue</span>
-                </div>
+            <div class="chart-card-header">
+              <div>
+                <h3 class="chart-title">Top Brands Inventory Valuation Matrix</h3>
+                <span class="chart-desc">Inventory valuation by warehouse units, with median and mean price context</span>
               </div>
-              <div class="chart-body" style="padding: 0; max-height: 260px; overflow-y: auto;">
-                <table class="brand-valuation-table">
-                  <thead>
+            </div>
+            <div class="chart-body" style="padding: 0; max-height: 260px; overflow-y: auto;">
+              <table class="brand-valuation-table">
+                <thead>
                     <tr>
                       <th>#</th>
                       <th>Brand</th>
                       <th>Scale</th>
                       <th>SKUs</th>
                       <th>Median / Mean</th>
-                      <th>Valuation (₹)</th>
+                      <th>Inventory Valuation (₹)</th>
                     </tr>
                   </thead>
                   <tbody id="ctoBrandMatrixTbody">

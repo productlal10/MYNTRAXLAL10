@@ -831,6 +831,7 @@ function renderOverviewDashboardInsights(stats, insights) {
 
 function renderFullDashboardInsights(stats, insights) {
   renderOverviewDashboardInsights(stats, insights);
+  renderDashboardPricePositioning(insights);
   renderGeographicDemand(insights);
   renderInventoryHeatmap(insights);
   renderAiMarketInsights(insights);
@@ -1282,9 +1283,75 @@ function renderBrandValuationMatrix(insights) {
         <div style="font-weight:700;color:#0f172a;">₹${Math.round(b.median_price || 0).toLocaleString('en-IN')}</div>
         <div style="font-size:10px;color:#64748b;margin-top:2px;">Mean ₹${Math.round(b.mean_price || 0).toLocaleString('en-IN')}</div>
       </td>
-      <td style="font-weight:750;color:#0f172a;">₹${Math.round(b.inventory_valuation || 0).toLocaleString()}</td>
+      <td>
+        <div style="font-weight:750;color:#0f172a;">₹${Math.round(b.inventory_valuation || 0).toLocaleString('en-IN')}</div>
+        <div style="font-size:10px;color:#64748b;margin-top:2px;">Inventory-based valuation</div>
+      </td>
     </tr>
   `).join('');
+}
+
+let dashboardPricePositioningChartInst = null;
+
+function renderDashboardPricePositioning(insights) {
+  const canvas = document.getElementById('dashboardPricePositioningChart');
+  if (!canvas || !window.Chart) return;
+
+  const matrix = Array.isArray(insights.brand_valuation_matrix) ? insights.brand_valuation_matrix.slice(0, 15) : [];
+  if (dashboardPricePositioningChartInst) dashboardPricePositioningChartInst.destroy();
+
+  if (!matrix.length) {
+    const ctx = canvas.getContext('2d');
+    if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+    return;
+  }
+
+  const maxSkus = Math.max(...matrix.map(b => Number(b.skus || 0)), 1);
+  dashboardPricePositioningChartInst = new Chart(canvas, {
+    type: 'bubble',
+    data: {
+      datasets: [{
+        label: 'Brands',
+        data: matrix.map(b => ({
+          x: Number(b.skus || 0),
+          y: Number(b.median_price || b.mean_price || 0),
+          r: Math.max(6, Math.min(22, 6 + Math.round((Number(b.skus || 0) / maxSkus) * 16))),
+          brand: b.brand,
+          meanPrice: Number(b.mean_price || 0),
+          valuation: Number(b.inventory_valuation || 0)
+        })),
+        backgroundColor: 'rgba(15, 23, 42, 0.82)',
+        hoverBackgroundColor: '#0f172a'
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const raw = ctx.raw || {};
+              return `${raw.brand}: ${Number(raw.x || 0).toLocaleString('en-IN')} SKUs, median ₹${Math.round(Number(raw.y || 0)).toLocaleString('en-IN')}, mean ₹${Math.round(Number(raw.meanPrice || 0)).toLocaleString('en-IN')}, inventory valuation ₹${Math.round(Number(raw.valuation || 0)).toLocaleString('en-IN')}`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          title: { display: true, text: 'Product Count', font: { size: 10, weight: '600' }, color: '#64748b' },
+          grid: { color: '#f1f5f9' },
+          ticks: { font: { size: 9 }, color: '#94a3b8', callback: v => (v >= 1000 ? `${v / 1000}K` : v) }
+        },
+        y: {
+          title: { display: true, text: 'Median Price (₹)', font: { size: 10, weight: '600' }, color: '#64748b' },
+          grid: { color: '#f1f5f9' },
+          ticks: { font: { size: 9 }, color: '#94a3b8', callback: v => (v >= 1000 ? `${v / 1000}K` : v) }
+        }
+      }
+    }
+  });
 }
 
 function renderDashboardKPIs(stats, insights) {
@@ -1629,7 +1696,7 @@ function renderGeographicDemand(insights) {
   const hubs = Array.isArray(insights.geographic_demand) ? insights.geographic_demand.slice(0, 5) : [];
 
   if (hubs.length === 0) {
-    listEl.innerHTML = '<div style="padding:12px;color:#94a3b8;font-size:12px;text-align:center;">Regional demand data is not connected yet, so this widget is intentionally hidden from inference.</div>';
+    listEl.innerHTML = '<div style="padding:12px;color:#94a3b8;font-size:12px;text-align:center;">Warehouse location percentages are not connected yet, so this section stays empty instead of inferring fake regional splits.</div>';
     return;
   }
 
@@ -1637,7 +1704,7 @@ function renderGeographicDemand(insights) {
     <div class="geo-rank-item">
       <div class="geo-rank-left">
         <span class="geo-num">${c.rank}</span>
-        <span class="geo-city">${escapeHtml(c.city)}</span>
+        <span class="geo-city">${escapeHtml(c.city || c.location || 'Warehouse')}</span>
       </div>
       <span class="geo-share">${c.share}%</span>
     </div>
