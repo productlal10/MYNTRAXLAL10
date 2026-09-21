@@ -1031,6 +1031,7 @@ function renderBrandsDropdown(insights) {
     const rawName = String(brand.name || '').trim();
     if (!rawName) return;
     const normalizedKey = rawName.toLowerCase();
+    if (normalizedKey === 'all') return;
     const nextCount = Number(brand.count || 0);
     const candidateLabel = canonicalizeBrandLabel(rawName);
     const existing = mergedBrands.get(normalizedKey);
@@ -1786,7 +1787,7 @@ let currentCatalogViewMode = 'grid'; // 'grid' (Image 1) or 'list' (Image 2)
 let activeCatalogScope = {
   category: 'shirts',
   subcategory: 'all',
-  gender: 'men',
+  gender: 'all',
   brandType: 'all',
   priceRanges: [],
   brands: [],
@@ -1963,7 +1964,7 @@ function setCatalogViewMode(mode) {
 function setCatalogGender(g, btn) {
   document.querySelectorAll('#scopeCatalogGenderPills .gender-pill').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
-  activeCatalogScope.gender = (g || 'men').toLowerCase();
+  activeCatalogScope.gender = (g || 'all').toLowerCase();
   applyCatalogScopeFilters();
 }
 
@@ -2058,7 +2059,7 @@ async function resetCatalogScopeFilters() {
   if (availSel) availSel.value = 'all';
 
   document.querySelectorAll('#scopeCatalogGenderPills .gender-pill').forEach(b => {
-    b.classList.toggle('active', b.textContent.trim().toLowerCase() === 'men');
+    b.classList.toggle('active', b.textContent.trim().toLowerCase() === 'all');
   });
 
   document.querySelectorAll('input[name="scopeCatalogPrice"]').forEach(c => c.checked = false);
@@ -2067,7 +2068,7 @@ async function resetCatalogScopeFilters() {
   activeCatalogScope = {
     category: 'shirts',
     subcategory: 'all',
-    gender: 'men',
+    gender: 'all',
     brandType: 'all',
     priceRanges: [],
     brands: [],
