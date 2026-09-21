@@ -209,6 +209,9 @@ let catalogMetaRequestSeq = 0;
 let dayOverDayRequestSeq = 0;
 let categoryIntelRequestSeq = 0;
 let priceIntelRequestSeq = 0;
+let brandsScopeRequestSeq = 0;
+let colorIntelRequestSeq = 0;
+let fabricIntelRequestSeq = 0;
 let hasLoadedCatalogMeta = false;
 const clientJsonCache = new Map();
 let _scraperStatusRequest = null;
@@ -4510,7 +4513,9 @@ async function refreshColorSidebarFacets() {
     const params = new URLSearchParams();
     if (activeColorScope.category && activeColorScope.category !== 'all') params.set('category', activeColorScope.category);
     if (activeColorScope.gender && activeColorScope.gender !== 'all') params.set('gender', activeColorScope.gender);
+    if (activeColorScope.subcategory && activeColorScope.subcategory !== 'all') params.set('subcategory', activeColorScope.subcategory);
     if (activeColorScope.priceRanges && activeColorScope.priceRanges.length > 0) params.set('price_ranges', activeColorScope.priceRanges.join(','));
+    if (activeColorScope.brands && activeColorScope.brands.length > 0) params.set('brand', activeColorScope.brands.join(','));
 
     const data = await fetchCachedJson(buildFilterCountsUrl(params), { ttlMs: 20000 });
     const pb = data.price_buckets || {};
@@ -4583,7 +4588,6 @@ async function applyColorScopeFilters() {
   document.querySelectorAll('#scopeColorAccBrand input[type="checkbox"]:checked').forEach(c => bChecked.push(c.value));
   activeColorScope.brands = bChecked;
 
-  await refreshColorSidebarFacets();
   loadColorIntelligence();
 }
 
@@ -4606,7 +4610,6 @@ async function resetColorScopeFilters() {
     brands: []
   };
 
-  await refreshColorSidebarFacets();
   loadColorIntelligence();
 }
 
@@ -4636,6 +4639,7 @@ function exportColorReport() {
 
 async function loadColorIntelligence() {
   try {
+    const requestSeq = ++colorIntelRequestSeq;
     await refreshColorSidebarFacets();
     const p = new URLSearchParams();
     p.append('category', activeColorScope.category || 'shirts');
@@ -4652,6 +4656,7 @@ async function loadColorIntelligence() {
 
     const res = await fetch(`/api/analytics/color-intelligence?${p.toString()}`);
     const data = await res.json();
+    if (requestSeq !== colorIntelRequestSeq) return;
     if (!data || data.status !== 'success') return;
 
     renderColorIntelligence(data);
@@ -6033,6 +6038,7 @@ async function refreshDodSidebarFacets() {
     if (activeDodScope.gender && activeDodScope.gender !== 'all') params.set('gender', activeDodScope.gender);
     if (activeDodScope.subcategory && activeDodScope.subcategory !== 'all') params.set('subcategory', activeDodScope.subcategory);
     if (activeDodScope.priceRanges && activeDodScope.priceRanges.length > 0) params.set('price_ranges', activeDodScope.priceRanges.join(','));
+    if (activeDodScope.brands && activeDodScope.brands.length > 0) params.set('brand', activeDodScope.brands.join(','));
 
     const data = await fetchCachedJson(buildFilterCountsUrl(params), { ttlMs: 20000 });
     const pb = data.price_buckets || {};
@@ -6946,6 +6952,9 @@ async function refreshFabricSidebarFacets() {
     if (activeFabricIntel.gender && activeFabricIntel.gender !== 'all') params.set('gender', activeFabricIntel.gender);
     if (activeFabricIntel.priceRanges && activeFabricIntel.priceRanges.length > 0) params.set('price_ranges', activeFabricIntel.priceRanges.join(','));
     if (activeFabricIntel.brandSizes && activeFabricIntel.brandSizes.length > 0) params.set('brand_size', activeFabricIntel.brandSizes.join(','));
+    if (activeFabricIntel.brand && activeFabricIntel.brand !== 'all') params.set('brand', activeFabricIntel.brand);
+    if (activeFabricIntel.fabric && activeFabricIntel.fabric !== 'all') params.set('fabric', activeFabricIntel.fabric);
+    if (activeFabricIntel.sustainability && activeFabricIntel.sustainability !== 'all') params.set('sustainability', activeFabricIntel.sustainability);
 
     const data = await fetchCachedJson(buildFilterCountsUrl(params), { ttlMs: 20000 });
     const pb = data.price_buckets || {};
@@ -7039,6 +7048,8 @@ function loadColorsForSelectedFabric(fab) {
 
 async function loadFabricIntelligence(category = activeFabricIntel.category, gender = activeFabricIntel.gender, fabric = activeFabricIntel.fabric) {
   try {
+    const requestSeq = ++fabricIntelRequestSeq;
+    await refreshFabricSidebarFacets();
     const params = new URLSearchParams();
     params.set('category', category);
     params.set('gender', gender);
@@ -7051,6 +7062,7 @@ async function loadFabricIntelligence(category = activeFabricIntel.category, gen
     const url = `/api/fabric-intelligence?${params.toString()}`;
     const res = await fetch(url);
     const data = await res.json();
+    if (requestSeq !== fabricIntelRequestSeq) return;
     if (!data || data.status !== 'success') {
       showFabricEmptyState('Fabric intelligence could not be loaded for the current filters.');
       return;
@@ -7546,6 +7558,7 @@ function exportBrandsReport() {
 const brandsScopeClientCache = new Map();
 
 async function loadBrandsScopeIntelligence() {
+  const requestSeq = ++brandsScopeRequestSeq;
   const p = new URLSearchParams();
   p.append('category', activeScopeIntel.category || 'shirts');
   p.append('gender', activeScopeIntel.gender || 'men');
@@ -7592,6 +7605,7 @@ async function loadBrandsScopeIntelligence() {
     const url = `/api/brands-intelligence?${p.toString()}`;
     const res = await fetch(url);
     const data = await res.json();
+    if (requestSeq !== brandsScopeRequestSeq) return;
     if (!data || data.status !== 'success') return;
 
     brandsScopeClientCache.set(cacheKey, data);
