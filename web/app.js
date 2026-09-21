@@ -1012,12 +1012,44 @@ function renderBrandsDropdown(insights) {
   const currentVal = String(selectEl.value || 'all').trim();
   const currentValLower = currentVal.toLowerCase();
 
-  _ctoFacetState.brands = (insights.available_brands || [])
-    .map(b => ({
-      value: String(b.name || '').trim(),
-      count: Number(b.count || 0)
-    }))
-    .filter(b => b.value);
+  const canonicalizeBrandLabel = (value = '') => {
+    const cleaned = String(value || '').trim();
+    if (!cleaned) return '';
+    if (cleaned === cleaned.toUpperCase() && cleaned.length <= 5) return cleaned;
+    const lower = cleaned.toLowerCase();
+    if (cleaned === lower || cleaned === cleaned.toUpperCase()) {
+      return cleaned
+        .split(/\s+/)
+        .map(part => part ? part.charAt(0).toUpperCase() + part.slice(1).toLowerCase() : part)
+        .join(' ');
+    }
+    return cleaned;
+  };
+
+  const mergedBrands = new Map();
+  (insights.available_brands || []).forEach((brand) => {
+    const rawName = String(brand.name || '').trim();
+    if (!rawName) return;
+    const normalizedKey = rawName.toLowerCase();
+    const nextCount = Number(brand.count || 0);
+    const candidateLabel = canonicalizeBrandLabel(rawName);
+    const existing = mergedBrands.get(normalizedKey);
+    if (!existing) {
+      mergedBrands.set(normalizedKey, {
+        value: candidateLabel,
+        count: nextCount
+      });
+      return;
+    }
+    existing.count += nextCount;
+    const existingLooksNoisy = existing.value === existing.value.toLowerCase() || existing.value === existing.value.toUpperCase();
+    const candidateLooksBetter = candidateLabel !== candidateLabel.toLowerCase() || candidateLabel !== candidateLabel.toUpperCase();
+    if ((existingLooksNoisy && candidateLooksBetter) || candidateLabel.length > existing.value.length) {
+      existing.value = candidateLabel;
+    }
+  });
+
+  _ctoFacetState.brands = Array.from(mergedBrands.values()).sort((a, b) => a.value.localeCompare(b.value, undefined, { sensitivity: 'base' }));
 
   const valueMap = new Map(_ctoFacetState.brands.map(b => [b.value.toLowerCase(), b.value]));
   const resolvedValue = currentValLower !== 'all' && !valueMap.has(currentValLower)
