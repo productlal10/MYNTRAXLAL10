@@ -1049,7 +1049,7 @@ def get_stats():
         filter_price_max = filters["price_max"]
         filter_brand_type = filters["brand_type"]
 
-        cache_key = f"stats_v2:{filter_category}:{filter_gender}:{filter_subcategory}:{filter_brand}:{filter_brand_scale}:{filter_price_min}:{filter_price_max}:{filter_brand_type}"
+        cache_key = f"stats_v3:{filter_category}:{filter_gender}:{filter_subcategory}:{filter_brand}:{filter_brand_scale}:{filter_price_min}:{filter_price_max}:{filter_brand_type}"
         has_scope_filters = any([
             filter_category and filter_category != "all",
             filter_gender and filter_gender != "all",
@@ -1070,9 +1070,9 @@ def get_stats():
                 cur.execute(f"""
                     SELECT 
                         COUNT(*) as total_products,
-                        COUNT(DISTINCT brand) as total_brands,
-                        COUNT(DISTINCT CASE WHEN is_myntra_label = 1 THEN brand END) as myntra_brands_count,
-                        COUNT(DISTINCT CASE WHEN is_myntra_label = 0 THEN brand END) as non_myntra_brands_count,
+                        COUNT(DISTINCT CASE WHEN {_valid_brand_sql("p")} THEN p.brand END) as total_brands,
+                        COUNT(DISTINCT CASE WHEN p.is_myntra_label = 1 AND {_valid_brand_sql("p")} THEN p.brand END) as myntra_brands_count,
+                        COUNT(DISTINCT CASE WHEN p.is_myntra_label = 0 AND {_valid_brand_sql("p")} THEN p.brand END) as non_myntra_brands_count,
                         SUM(CASE WHEN is_in_stock = 1 THEN 1 ELSE 0 END) as in_stock,
                         ROUND(AVG(selling_price), 2) as avg_price,
                         ROUND(AVG(mrp), 2) as avg_mrp,
@@ -1097,7 +1097,10 @@ def get_stats():
                         SUM(CASE WHEN is_in_stock = 1 THEN 1 ELSE 0 END) as in_stock,
                         ROUND(AVG(selling_price), 2) as avg_price,
                         ROUND(AVG(mrp), 2) as avg_mrp,
-                        ROUND(AVG(discount_percentage), 1) as avg_discount
+                        ROUND(AVG(discount_percentage), 1) as avg_discount,
+                        COUNT(DISTINCT CASE WHEN brand IS NOT NULL AND BTRIM(brand) != '' AND LOWER(BTRIM(brand)) != 'all' THEN brand END) as total_brands,
+                        COUNT(DISTINCT CASE WHEN is_myntra_label = 1 AND brand IS NOT NULL AND BTRIM(brand) != '' AND LOWER(BTRIM(brand)) != 'all' THEN brand END) as myntra_brands_count,
+                        COUNT(DISTINCT CASE WHEN is_myntra_label = 0 AND brand IS NOT NULL AND BTRIM(brand) != '' AND LOWER(BTRIM(brand)) != 'all' THEN brand END) as non_myntra_brands_count
                     FROM products;
                 """)
                 r = cur.fetchone()
@@ -1106,19 +1109,9 @@ def get_stats():
                 avg_price = float(r[2] or 0.0)
                 avg_mrp = float(r[3] or 0.0)
                 avg_discount = float(r[4] or 0.0)
-
-                cur.execute("""
-                    SELECT
-                        COUNT(*) as total_brands,
-                        SUM(CASE WHEN is_myntra_label = 1 THEN 1 ELSE 0 END) as myntra_brands_count,
-                        SUM(CASE WHEN is_myntra_label = 0 THEN 1 ELSE 0 END) as non_myntra_brands_count
-                    FROM brands
-                    WHERE brand_name IS NOT NULL AND brand_name != '';
-                """)
-                brand_row = cur.fetchone() or {}
-                total_brands = int(brand_row["total_brands"] or 0)
-                myntra_brands_count = int(brand_row["myntra_brands_count"] or 0)
-                non_myntra_brands_count = int(brand_row["non_myntra_brands_count"] or 0)
+                total_brands = int(r[5] or 0)
+                myntra_brands_count = int(r[6] or 0)
+                non_myntra_brands_count = int(r[7] or 0)
 
             total_warehouse_units = _get_scoped_inventory_units(cur, where_sql, where_params)
             return {
@@ -3381,7 +3374,7 @@ def get_day_over_day_analytics_route():
     new_arrivals = request.args.get("new_arrivals")
     movement_type = request.args.get("movement_type", "all").strip().lower()
 
-    cache_key = f"dod_market_v7:{category.lower()}:{gender.lower()}:{subcategory}:{price_min}:{price_max}:{price_ranges}:{brand_size}:{brand_type}:{brand}:{color}:{fabric}:{fit}:{discount_min}:{rating_min}:{availability}:{new_arrivals}:{movement_type}"
+    cache_key = f"dod_market_v8:{category.lower()}:{gender.lower()}:{subcategory}:{price_min}:{price_max}:{price_ranges}:{brand_size}:{brand_type}:{brand}:{color}:{fabric}:{fit}:{discount_min}:{rating_min}:{availability}:{new_arrivals}:{movement_type}"
     cached = api_cache.get(cache_key)
     if cached:
         return jsonify(cached)
@@ -3400,7 +3393,7 @@ def get_day_over_day_analytics_route():
     cur.execute(f"""
         SELECT
             COUNT(*) as total_prods,
-            COUNT(DISTINCT p.brand) as brands_count,
+            COUNT(DISTINCT CASE WHEN {_valid_brand_sql("p")} THEN p.brand END) as brands_count,
             ROUND(AVG(p.selling_price)) as mean_price,
             ROUND(AVG(p.discount_percentage), 1) as avg_disc
         FROM products p
@@ -4794,7 +4787,7 @@ def _build_catalog_meta_payload(cur, filters: dict):
     cur.execute(f"""
         SELECT
             COUNT(*) AS total_products,
-            COUNT(DISTINCT p.brand) AS total_brands,
+            COUNT(DISTINCT CASE WHEN {_valid_brand_sql("p")} THEN p.brand END) AS total_brands,
             COUNT(DISTINCT p.category) AS total_categories,
             ROUND(AVG(COALESCE(p.discount_percentage, 0)), 1) AS avg_discount,
             SUM(CASE WHEN p.is_in_stock = 1 THEN 1 ELSE 0 END) AS in_stock_products,
@@ -5143,7 +5136,7 @@ def get_category_intelligence():
     availability = request.args.get("availability")
     new_arrivals = request.args.get("new_arrivals")
 
-    cache_key = f"cat_intel_v5:{category.lower()}:{gender.lower()}:{subcategory}:{price_min}:{price_max}:{price_ranges}:{brand_size}:{brand_type}:{brand}:{color}:{fabric}:{fit}:{discount_min}:{rating_min}:{availability}:{new_arrivals}"
+    cache_key = f"cat_intel_v6:{category.lower()}:{gender.lower()}:{subcategory}:{price_min}:{price_max}:{price_ranges}:{brand_size}:{brand_type}:{brand}:{color}:{fabric}:{fit}:{discount_min}:{rating_min}:{availability}:{new_arrivals}"
     cached = api_cache.get(cache_key)
     if cached:
         return jsonify(cached)
@@ -5163,7 +5156,7 @@ def get_category_intelligence():
     cur.execute(f"""
         SELECT 
             COUNT(*) as total_prods,
-            COUNT(DISTINCT p.brand) as brands_count,
+            COUNT(DISTINCT CASE WHEN {_valid_brand_sql("p")} THEN p.brand END) as brands_count,
             ROUND(AVG(p.selling_price)) as mean_price,
             ROUND(AVG(p.discount_percentage), 1) as avg_disc,
             SUM(CASE WHEN p.selling_price < 500 THEN 1 ELSE 0 END) as p_lt_500,
@@ -7709,7 +7702,7 @@ def get_color_intelligence():
     cur.execute(f"""
         SELECT 
             COUNT(*) as total_prods,
-            COUNT(DISTINCT p.brand) as brands_count,
+            COUNT(DISTINCT CASE WHEN {_valid_brand_sql("p")} THEN p.brand END) as brands_count,
             COUNT(DISTINCT CASE WHEN {_valid_color_sql("p.primary_color")} THEN LOWER(TRIM(p.primary_color)) END) as colors_count
         FROM products p
         WHERE {where_sql};
@@ -7739,8 +7732,8 @@ def get_color_intelligence():
             LEFT JOIN daily_sales_analytics sa ON sa.product_id = p.product_id
             WHERE {where_sql} AND {_valid_color_sql("p.primary_color")}
             GROUP BY p.primary_color
-        )
-        WITH ranked_colors AS (
+        ),
+        ranked_colors AS (
             SELECT
                 p.primary_color,
                 p.selling_price,
@@ -7777,6 +7770,7 @@ def get_color_intelligence():
         growth_pct = _pct_change(_safe_float(r["curr_units"]), _safe_float(r["prev_units"]))
         color_dist.append({
             "rank": rank,
+            "raw_color": r["primary_color"],
             "color": _normalize_color_name(r["primary_color"], fallback="Multicolor"),
             "hex": _normalize_color_hex(r["hex_val"], r["primary_color"], fallback="#0f172a"),
             "count": cnt,
@@ -7821,7 +7815,7 @@ def get_color_intelligence():
     cur.execute(f"""
         SELECT p.brand, COUNT(*) as b_cnt
         FROM products p
-        WHERE {where_sql}
+        WHERE {where_sql} AND {_valid_brand_sql("p")}
         GROUP BY p.brand
         ORDER BY b_cnt DESC
         LIMIT 5;
@@ -7843,7 +7837,7 @@ def get_color_intelligence():
         hm_rows = cur.fetchall()
         hm_map = {}
         for r in hm_rows:
-            hm_map[(r["brand"], r["primary_color"])] = int(r["cnt"])
+            hm_map[(r["brand"], _normalize_color_name(r["primary_color"], fallback="Multicolor"))] = int(r["cnt"])
 
         for b in top_5_brands:
             row_cells = []
@@ -7870,10 +7864,10 @@ def get_color_intelligence():
             GROUP BY p.primary_color;
         """, params + top5_colors)
         seas_map = {r["primary_color"]: r for r in cur.fetchall()}
-        
+
         for c in color_dist[:5]:
             col_name = c["color"]
-            s_row = seas_map.get(col_name)
+            s_row = seas_map.get(c.get("raw_color"))
             tot = c["count"]
             if s_row:
                 w_c = int(s_row["winter_cnt"] or 0)
