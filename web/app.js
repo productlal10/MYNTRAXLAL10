@@ -3593,7 +3593,7 @@ function renderComparatorBrandPills() {
   container.innerHTML = comparatorState.selectedBrands.map(brand => `
     <span class="brand-pill-tag">
       <span>${escapeHtml(brand)}</span>
-      <span class="brand-pill-remove" onclick='removeComparatorBrand(${JSON.stringify(brand)})' title="Remove brand">&times;</span>
+      <span class="brand-pill-remove" data-brand="${escapeHtml(brand)}" onclick="removeComparatorBrand(this.dataset.brand)" title="Remove brand">&times;</span>
     </span>
   `).join('') + (
     comparatorState.selectedBrands.length < 5
@@ -3658,7 +3658,7 @@ async function fetchBrandPickerResults(query) {
     listContainer.innerHTML = brands.map(b => {
       const isSelected = comparatorState.selectedBrands.some(sb => sb.toLowerCase() === b.brand.toLowerCase());
       return `
-        <div class="brand-picker-item" onclick="${isSelected ? '' : `selectBrandFromPicker(${JSON.stringify(b.brand)})`}" style="${isSelected ? 'opacity: 0.5; cursor: not-allowed;' : ''}">
+        <div class="brand-picker-item" ${isSelected ? '' : `data-brand="${escapeHtml(b.brand)}" onclick="selectBrandFromPicker(this.dataset.brand)"`} style="${isSelected ? 'opacity: 0.5; cursor: not-allowed;' : ''}">
           <span class="brand-picker-item-name">${escapeHtml(b.brand)}</span>
           <span class="brand-picker-item-count">${isSelected ? 'Added' : `${Number(b.count).toLocaleString()} SKUs`}</span>
         </div>
@@ -3829,7 +3829,7 @@ function renderComparatorBrandCards(brands) {
       <div>
         <div class="brand-card-top">
           ${renderBrandEmblem(b.display_name)}
-          <button class="brand-dots-btn" title="Inspect ${escapeHtml(b.display_name)}" onclick='openCatalogWithScope({ brand: ${JSON.stringify(b.display_name)} });'>•••</button>
+          <button class="brand-dots-btn" title="Inspect ${escapeHtml(b.display_name)}" data-brand="${escapeHtml(b.display_name)}" onclick="openCatalogWithScope({ brand: this.dataset.brand });">•••</button>
         </div>
         <div class="brand-prods-lbl">Products</div>
         <div class="brand-prods-val">${Number(b.product_count).toLocaleString()}</div>
@@ -4876,7 +4876,7 @@ async function fetchBrandsDirectory() {
         <td>${(b.western_count || 0).toLocaleString()}</td>
         <td><strong>${(b.total_count || 0).toLocaleString()}</strong></td>
         <td>
-          <button class="btn btn-secondary" onclick='openCatalogWithScope({ brand: ${JSON.stringify(b.brand_name)} });'>View SKUs</button>
+          <button class="btn btn-secondary" data-brand="${escapeHtml(b.brand_name)}" onclick="openCatalogWithScope({ brand: this.dataset.brand });">View SKUs</button>
         </td>
       </tr>
     `).join('');
