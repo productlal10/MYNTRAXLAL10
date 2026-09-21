@@ -3545,6 +3545,47 @@ let compChartAsp = null;
 let compChartDiscount = null;
 let brandSearchDebounceTimer = null;
 
+function buildBrandComparatorScopeParams(includeSelectedBrands = true) {
+  const p = new URLSearchParams();
+  p.append('category', comparatorState.category || activeScopeIntel.category || 'shirts');
+  p.append('gender', activeScopeIntel.gender || 'men');
+
+  if (activeScopeIntel.subcategory && activeScopeIntel.subcategory !== 'all') {
+    p.append('subcategory', activeScopeIntel.subcategory);
+  }
+  if (activeScopeIntel.priceRanges && activeScopeIntel.priceRanges.length > 0) {
+    p.append('price_ranges', activeScopeIntel.priceRanges.join(','));
+  }
+  if (activeScopeIntel.brandSizes && activeScopeIntel.brandSizes.length > 0) {
+    p.append('brand_size', activeScopeIntel.brandSizes.join(','));
+  }
+  if (activeScopeIntel.colors && activeScopeIntel.colors.length > 0) {
+    p.append('color', activeScopeIntel.colors.join(','));
+  }
+  if (activeScopeIntel.fabrics && activeScopeIntel.fabrics.length > 0) {
+    p.append('fabric', activeScopeIntel.fabrics.join(','));
+  }
+  if (activeScopeIntel.fits && activeScopeIntel.fits.length > 0) {
+    p.append('fit', activeScopeIntel.fits.join(','));
+  }
+  if (Number(activeScopeIntel.discountMin || 0) > 0) {
+    p.append('discount_min', activeScopeIntel.discountMin);
+  }
+  if (activeScopeIntel.inStockOnly) {
+    p.append('availability', 'in_stock');
+  }
+  if (Number(activeScopeIntel.ratingMin || 0) > 0) {
+    p.append('rating_min', activeScopeIntel.ratingMin);
+  }
+  if (activeScopeIntel.newArrivalsOnly) {
+    p.append('new_arrivals', '1');
+  }
+  if (includeSelectedBrands && comparatorState.selectedBrands.length > 0) {
+    p.append('brands', comparatorState.selectedBrands.join(','));
+  }
+  return p;
+}
+
 function renderComparatorBrandPills() {
   const container = document.getElementById('comparatorBrandsPillBox');
   if (!container) return;
@@ -3603,7 +3644,9 @@ async function fetchBrandPickerResults(query) {
   listContainer.innerHTML = '<div style="padding: 16px; text-align: center; color: #94a3b8; font-size: 12px;">Searching catalog brands...</div>';
 
   try {
-    const res = await fetch(`/api/brands/search?q=${encodeURIComponent(query)}`);
+    const params = buildBrandComparatorScopeParams(false);
+    params.set('q', query || '');
+    const res = await fetch(`/api/brands/search?${params.toString()}`);
     const json = await res.json();
     const brands = json.brands || [];
 
@@ -3639,10 +3682,10 @@ function selectBrandFromPicker(brandName) {
 }
 
 function resetBrandComparator() {
-  comparatorState.category = 'shirts';
+  comparatorState.category = activeScopeIntel.category || 'shirts';
   comparatorState.selectedBrands = [];
   const catSelect = document.getElementById('comparatorCategorySelect');
-  if (catSelect) catSelect.value = 'shirts';
+  if (catSelect) catSelect.value = comparatorState.category;
   renderComparatorBrandPills();
   loadBrandComparator();
 }
@@ -3721,17 +3764,24 @@ function comparatorBarColors(values, prefer = 'max') {
 async function loadBrandComparator() {
   renderComparatorBrandPills();
   try {
-    const brandsParam = comparatorState.selectedBrands.join(',');
-    const url = `/api/brands/comparator?brands=${encodeURIComponent(brandsParam)}&category=${encodeURIComponent(comparatorState.category)}`;
+    const params = buildBrandComparatorScopeParams(true);
+    const url = `/api/brands/comparator?${params.toString()}`;
     const res = await fetch(url);
     const data = await res.json();
     if (!data || !data.brands) return;
 
-    if (comparatorState.selectedBrands.length === 0 && Array.isArray(data.brands) && data.brands.length > 0) {
-      comparatorState.selectedBrands = data.brands
-        .map(b => b.display_name || b.brand)
-        .filter(Boolean)
-        .slice(0, 5);
+    const resolvedBrands = Array.isArray(data.brands)
+      ? data.brands.map(b => b.display_name || b.brand).filter(Boolean).slice(0, 5)
+      : [];
+
+    const currentBrands = comparatorState.selectedBrands.map(b => b.toLowerCase());
+    const nextBrands = resolvedBrands.map(b => b.toLowerCase());
+    const brandSelectionChanged =
+      resolvedBrands.length > 0 &&
+      (currentBrands.length !== nextBrands.length || currentBrands.some((brand, idx) => brand !== nextBrands[idx]));
+
+    if ((comparatorState.selectedBrands.length === 0 || brandSelectionChanged) && resolvedBrands.length > 0) {
+      comparatorState.selectedBrands = resolvedBrands;
       renderComparatorBrandPills();
     }
 

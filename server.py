@@ -3455,31 +3455,75 @@ def get_brands():
 @app.route("/api/brands/search")
 def search_catalog_brands():
     q = request.args.get("q", "").strip().lower()
-    cache_key = f"brands_search:{q}"
+    category = request.args.get("category", "all").strip()
+    gender = request.args.get("gender", "all").strip()
+    subcategory = request.args.get("subcategory", "all").strip()
+    price_min = request.args.get("price_min")
+    price_max = request.args.get("price_max")
+    price_ranges = request.args.get("price_ranges", "").strip()
+    brand_size = request.args.get("brand_size", "").strip()
+    brand_type = request.args.get("brand_type", "").strip()
+    color = request.args.get("color", "").strip()
+    fabric = request.args.get("fabric", "").strip()
+    fit = request.args.get("fit", "").strip()
+    discount_min = request.args.get("discount_min")
+    rating_min = request.args.get("rating_min")
+    availability = request.args.get("availability", "").strip()
+    new_arrivals = request.args.get("new_arrivals", "").strip()
+
+    cache_key = (
+        "brands_search_v2:"
+        f"{q}:{category.lower()}:{gender.lower()}:{subcategory.lower()}:"
+        f"{price_min}:{price_max}:{price_ranges}:{brand_size}:{brand_type}:"
+        f"{color}:{fabric}:{fit}:{discount_min}:{rating_min}:{availability}:{new_arrivals}"
+    )
     cached = api_cache.get(cache_key)
     if cached:
         return jsonify(cached)
 
     conn = db._get_connection()
     cur = conn.cursor()
+    where_sql, params = _build_catalog_filters(
+        category=category or "all",
+        gender=gender or "all",
+        price_min=price_min,
+        price_max=price_max,
+        price_ranges=price_ranges,
+        brand_size=brand_size,
+        brand_type=brand_type,
+        subcategory=subcategory,
+        color=color,
+        fabric=fabric,
+        fit=fit,
+        discount_min=discount_min,
+        rating_min=rating_min,
+        availability=availability,
+        new_arrivals=new_arrivals
+    )
+
     if q:
-        cur.execute("""
+        cur.execute(f"""
             SELECT brand, COUNT(*) as cnt
-            FROM products
-            WHERE LOWER(brand) LIKE ? AND brand IS NOT NULL AND brand != ''
+            FROM products p
+            WHERE {where_sql}
+              AND LOWER(p.brand) LIKE ?
+              AND p.brand IS NOT NULL
+              AND p.brand != ''
             GROUP BY brand
             ORDER BY cnt DESC
             LIMIT 30;
-        """, (f"%{q}%",))
+        """, params + [f"%{q}%"])
     else:
-        cur.execute("""
+        cur.execute(f"""
             SELECT brand, COUNT(*) as cnt
-            FROM products
-            WHERE brand IS NOT NULL AND brand != ''
+            FROM products p
+            WHERE {where_sql}
+              AND p.brand IS NOT NULL
+              AND p.brand != ''
             GROUP BY brand
             ORDER BY cnt DESC
             LIMIT 40;
-        """)
+        """, params)
     rows = cur.fetchall()
     result = {"status": "success", "brands": [{"brand": r[0], "count": r[1]} for r in rows]}
     api_cache.set(cache_key, result, ttl=120.0)
@@ -3489,32 +3533,83 @@ def search_catalog_brands():
 @app.route("/api/brands/comparator")
 def get_brand_comparator():
     category = request.args.get("category", "").lower().strip()
-    comp_where, comp_params = _build_catalog_filters(category=category or "all", gender="all")
+    gender = request.args.get("gender", "all").strip()
+    subcategory = request.args.get("subcategory", "all").strip()
+    price_min = request.args.get("price_min")
+    price_max = request.args.get("price_max")
+    price_ranges = request.args.get("price_ranges", "").strip()
+    brand_size = request.args.get("brand_size", "").strip()
+    brand_type = request.args.get("brand_type", "").strip()
+    color = request.args.get("color", "").strip()
+    fabric = request.args.get("fabric", "").strip()
+    fit = request.args.get("fit", "").strip()
+    discount_min = request.args.get("discount_min")
+    rating_min = request.args.get("rating_min")
+    availability = request.args.get("availability", "").strip()
+    new_arrivals = request.args.get("new_arrivals", "").strip()
+    comp_where, comp_params = _build_catalog_filters(
+        category=category or "all",
+        gender=gender or "all",
+        price_min=price_min,
+        price_max=price_max,
+        price_ranges=price_ranges,
+        brand_size=brand_size,
+        brand_type=brand_type,
+        subcategory=subcategory,
+        color=color,
+        fabric=fabric,
+        fit=fit,
+        discount_min=discount_min,
+        rating_min=rating_min,
+        availability=availability,
+        new_arrivals=new_arrivals
+    )
     req_brands = request.args.get("brands", "")
     if req_brands:
-        selected_brands = [b.strip() for b in req_brands.split(",") if b.strip()][:5]
+        requested_brands = [b.strip() for b in req_brands.split(",") if b.strip()][:5]
     else:
-        conn = db._get_connection()
-        cur = conn.cursor()
-        cur.execute(f"""
-            SELECT brand
-            FROM products p
-            WHERE {comp_where} AND brand IS NOT NULL AND brand != ''
-            GROUP BY brand
-            ORDER BY COUNT(*) DESC
-            LIMIT 5;
-        """, comp_params)
-        selected_brands = [r["brand"] for r in cur.fetchall()]
-        if not selected_brands:
-            selected_brands = []
-
-    cache_key = f"comparator:{category}:{','.join(sorted(selected_brands))}"
-    cached = api_cache.get(cache_key)
-    if cached:
-        return jsonify(cached)
+        requested_brands = []
 
     conn = db._get_connection()
     cur = conn.cursor()
+
+    def _fetch_top_scope_brands(limit=5):
+        cur.execute(f"""
+            SELECT p.brand
+            FROM products p
+            WHERE {comp_where} AND p.brand IS NOT NULL AND p.brand != ''
+            GROUP BY p.brand
+            ORDER BY COUNT(*) DESC, p.brand ASC
+            LIMIT ?;
+        """, comp_params + [limit])
+        return [r["brand"] for r in cur.fetchall()]
+
+    selected_brands = []
+    if requested_brands:
+        placeholders = ",".join("?" for _ in requested_brands)
+        cur.execute(f"""
+            SELECT p.brand
+            FROM products p
+            WHERE {comp_where}
+              AND p.brand IN ({placeholders})
+            GROUP BY p.brand
+            ORDER BY COUNT(*) DESC, p.brand ASC;
+        """, comp_params + requested_brands)
+        available = {row["brand"] for row in cur.fetchall()}
+        selected_brands = [brand for brand in requested_brands if brand in available]
+
+    if not selected_brands:
+        selected_brands = _fetch_top_scope_brands(5)
+
+    cache_key = (
+        "comparator_v2:"
+        f"{category}:{gender.lower()}:{subcategory.lower()}:{price_min}:{price_max}:{price_ranges}:"
+        f"{brand_size}:{brand_type}:{color}:{fabric}:{fit}:{discount_min}:{rating_min}:{availability}:{new_arrivals}:"
+        f"{','.join(sorted(selected_brands))}"
+    )
+    cached = api_cache.get(cache_key)
+    if cached:
+        return jsonify(cached)
 
     if not selected_brands:
         empty_result = {
@@ -3820,6 +3915,11 @@ def get_brand_comparator():
             "inventory_snapshot_date": str(latest_snapshot_date) if latest_snapshot_date else None,
             "sales_start_date": str(sales_30d_start_date) if sales_30d_start_date else None,
             "sales_end_date": str(latest_sales_date) if latest_sales_date else None
+        },
+        "applied_scope": {
+            "category": category or "all",
+            "gender": gender or "all",
+            "subcategory": subcategory or "all"
         },
         "brands": brands_output,
         "key_insight": key_insight
