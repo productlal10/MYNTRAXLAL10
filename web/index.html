@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='20' font-size='20'>🏮</text></svg>">
-  <link rel="stylesheet" href="styles.css?v=3.7" />
+  <link rel="stylesheet" href="styles.css?v=4.0" />
 </head>
 <body class="app-layout">
   <!-- LEFT SIDEBAR -->
@@ -170,115 +170,228 @@
           </button>
         </div>
 
-        <!-- CTO Executive Filter Bar -->
+        <!-- Dashboard Filter Bar -->
         <div class="cto-filter-card">
-          <div class="cto-filter-header">
-            <div class="cto-title-wrap">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#0f172a" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>
-              <h3 class="cto-filter-title">CTO Executive Filters & Range Analysis</h3>
-            </div>
-            <span class="cto-filter-badge" id="ctoActiveFilterBadge">Catalog Scope: All Products</span>
-          </div>
+          <div class="cto-filter-shell">
+            <div class="cto-filter-topbar">
+              <div class="cto-filter-heading">
+                <div class="cto-filter-iconbox">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                    <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+                  </svg>
+                </div>
+                <div class="cto-filter-copy">
+                  <h3 class="cto-filter-hero-title">Brand Intelligence Filters</h3>
+                  <p class="cto-filter-hero-subtitle">Refine your selection to explore brands, categories and market insights.</p>
+                </div>
+              </div>
 
-          <div class="cto-filter-grid">
-            <!-- Price Range Filter Inputs -->
-            <div class="cto-filter-group">
-              <label class="cto-filter-label">Custom Price Range (₹)</label>
-              <div class="cto-price-inputs">
-                <input type="number" id="ctoPriceMin" placeholder="Min ₹" min="0" step="50" onchange="syncCTOInputsToSlider()" />
-                <span class="cto-dash">–</span>
-                <input type="number" id="ctoPriceMax" placeholder="Max ₹" min="0" step="50" onchange="syncCTOInputsToSlider()" />
+              <div class="cto-filter-toolbar">
+                <div class="cto-scope-stat">
+                  <strong id="ctoScopeBrandCount">0 Brands</strong>
+                  <span>in current scope</span>
+                </div>
+                <button class="cto-toolbar-btn cto-toolbar-btn-secondary" type="button" onclick="resetDashboardFilters()">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="23 4 23 10 17 10"></polyline>
+                    <polyline points="1 20 1 14 7 14"></polyline>
+                    <path d="M3.51 9a9 9 0 0 1 14.13-3.36L23 10"></path>
+                    <path d="M20.49 15a9 9 0 0 1-14.13 3.36L1 14"></path>
+                  </svg>
+                  <span>Reset All</span>
+                </button>
+                <button class="cto-toolbar-btn cto-toolbar-btn-primary" type="button" onclick="applyDashboardFilters()">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                    <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+                  </svg>
+                  <span>Apply Filters</span>
+                </button>
               </div>
             </div>
 
-            <!-- Visual Dual-Thumb Price Range Drag Slider -->
-            <div class="cto-filter-group" style="min-width: 220px; flex: 1.5;">
-              <label class="cto-filter-label" style="display: flex; justify-content: space-between;">
-                <span>Visual Drag Range Slider</span>
-                <span id="ctoDragValLabel" style="color: #0f172a; font-weight: 750;">₹0 – ₹10,000+</span>
-              </label>
-              <div class="cto-slider-wrap">
-                <div class="cto-slider-track-bg"></div>
-                <div class="cto-slider-track-fill" id="ctoSliderTrackFill" style="left: 0%; right: 0%;"></div>
-                <input type="range" id="ctoSliderMin" class="cto-range-input" min="0" max="10000" step="100" value="0" oninput="onCTOSliderInput('min')" onchange="triggerCTOFilter()" />
-                <input type="range" id="ctoSliderMax" class="cto-range-input" min="0" max="10000" step="100" value="10000" oninput="onCTOSliderInput('max')" onchange="triggerCTOFilter()" />
+            <div class="cto-filter-grid cto-filter-grid-top">
+              <div class="cto-filter-panel">
+                <label class="cto-filter-label">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="3" width="7" height="7"></rect>
+                    <rect x="14" y="3" width="7" height="7"></rect>
+                    <rect x="14" y="14" width="7" height="7"></rect>
+                    <rect x="3" y="14" width="7" height="7"></rect>
+                  </svg>
+                  <span>Category</span>
+                </label>
+                <select id="ctoCategorySelect" class="cto-select" onchange="triggerCTOFilter()">
+                  <option value="all">All Categories</option>
+                  <option value="shirts">Shirts</option>
+                  <option value="jeans">Jeans &amp; Denims</option>
+                  <option value="western-wear">Western Wear</option>
+                </select>
+                <div class="cto-filter-help">Select a product category</div>
+              </div>
+
+              <div class="cto-filter-panel">
+                <label class="cto-filter-label">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path>
+                    <line x1="7" y1="7" x2="7.01" y2="7"></line>
+                  </svg>
+                  <span>Subcategory</span>
+                </label>
+                <select id="ctoSubcategorySelect" class="cto-select" onchange="triggerCTOFilter()">
+                  <option value="all">All Subcategories</option>
+                </select>
+                <div id="ctoSubcategoryHint" class="cto-filter-help">Loading dynamic subcategory options...</div>
+              </div>
+
+              <div class="cto-filter-panel">
+                <label class="cto-filter-label">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                    <circle cx="8.5" cy="7" r="4"></circle>
+                    <path d="M20 8v6"></path>
+                    <path d="M23 11h-6"></path>
+                  </svg>
+                  <span>Gender</span>
+                </label>
+                <select id="ctoGenderSelect" class="cto-select" onchange="triggerCTOFilter()">
+                  <option value="all">All Genders</option>
+                  <option value="men">Men</option>
+                  <option value="women">Women</option>
+                  <option value="kids">Kids</option>
+                </select>
+                <div class="cto-filter-help">Men, Women or Kids</div>
+              </div>
+
+              <div class="cto-filter-panel">
+                <label class="cto-filter-label">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                    <path d="M9 12l2 2 4-4"></path>
+                  </svg>
+                  <span>Brand Type</span>
+                </label>
+                <select id="ctoBrandTypeSelect" class="cto-select" onchange="triggerCTOFilter()">
+                  <option value="all">All Brands</option>
+                  <option value="myntra">Myntra In-House Labels</option>
+                  <option value="non-myntra">External Brands</option>
+                </select>
+                <div class="cto-filter-help">Select brand classification</div>
+              </div>
+
+              <div class="cto-filter-panel">
+                <label class="cto-filter-label">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M6 3h12"></path>
+                    <path d="M12 3v18"></path>
+                    <path d="M8 8h8"></path>
+                    <path d="M8 16h8"></path>
+                  </svg>
+                  <span>Price Range (₹)</span>
+                </label>
+                <div class="cto-price-inputs">
+                  <input type="number" id="ctoPriceMin" placeholder="Min ₹" min="0" step="50" onchange="syncCTOInputsToSlider()" />
+                  <span class="cto-dash">–</span>
+                  <input type="number" id="ctoPriceMax" placeholder="Max ₹" min="0" step="50" onchange="syncCTOInputsToSlider()" />
+                </div>
+                <div class="cto-filter-help">Enter custom price range</div>
               </div>
             </div>
 
-            <!-- Subcategory Breakdown -->
-            <div class="cto-filter-group">
-              <label class="cto-filter-label">Subcategory Filter</label>
-              <select id="ctoSubcategorySelect" class="cto-select" onchange="triggerCTOFilter()">
-                <option value="all">All Subcategories</option>
-                <!-- Dynamically populated from database -->
-              </select>
-              <div id="ctoSubcategoryHint" class="cto-filter-help" style="margin-top: 6px; font-size: 0.75rem; color: #64748b;">Subcategories follow the current scope, while staying independent from their own selector.</div>
+            <div class="cto-filter-grid cto-filter-grid-bottom">
+              <div class="cto-filter-panel cto-filter-panel-wide">
+                <label class="cto-filter-label">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                  </svg>
+                  <span>Brand Search</span>
+                </label>
+                <div class="cto-brand-search-wrap">
+                  <input type="search" id="ctoBrandSearchInput" class="cto-select cto-brand-search-input" placeholder="Search brand inside current scope..." onfocus="openCTOBrandDropdown()" oninput="filterCTOBrandOptions()" autocomplete="off" />
+                  <button type="button" class="cto-brand-dropdown-toggle" onclick="toggleCTOBrandDropdown()" aria-label="Toggle brand options">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                      <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                  </button>
+                  <div id="ctoBrandDropdown" class="cto-brand-dropdown" hidden>
+                    <div class="cto-brand-dropdown-head">
+                      <span id="ctoBrandDropdownTitle">Choose a brand</span>
+                      <span id="ctoBrandDropdownMeta">Dynamic options</span>
+                    </div>
+                    <div id="ctoBrandDropdownList" class="cto-brand-dropdown-list"></div>
+                  </div>
+                </div>
+                <select id="ctoBrandSelect" class="cto-hidden-select" onchange="triggerCTOFilter()">
+                  <option value="all">All Brands</option>
+                </select>
+                <div id="ctoBrandHint" class="cto-filter-help">Type brand name and choose from dynamic suggestions.</div>
+              </div>
+
+              <div class="cto-filter-panel">
+                <label class="cto-filter-label">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="20" x2="18" y2="10"></line>
+                    <line x1="12" y1="20" x2="12" y2="4"></line>
+                    <line x1="6" y1="20" x2="6" y2="14"></line>
+                  </svg>
+                  <span>Brand Scale Tier</span>
+                </label>
+                <select id="ctoBrandScaleSelect" class="cto-select" onchange="triggerCTOFilter()">
+                  <option value="all">All Scales (Largest &amp; Small)</option>
+                  <option value="largest" id="ctoBrandScaleOptionLargest">Largest Brands</option>
+                  <option value="mid" id="ctoBrandScaleOptionMid">Mid-Tier Brands</option>
+                  <option value="small" id="ctoBrandScaleOptionSmall">Small &amp; Emerging</option>
+                </select>
+                <div class="cto-filter-help">Filter by brand size or market presence</div>
+              </div>
+
+              <div class="cto-filter-panel">
+                <label class="cto-filter-label">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="16 3 21 3 21 8"></polyline>
+                    <line x1="4" y1="20" x2="21" y2="3"></line>
+                    <polyline points="8 21 3 21 3 16"></polyline>
+                    <line x1="15" y1="15" x2="3" y2="3"></line>
+                  </svg>
+                  <span>Brand Matrix Sorting</span>
+                </label>
+                <select id="ctoSortSelect" class="cto-select" onchange="triggerCTOFilter()">
+                  <option value="valuation_desc">Inventory Valuation (High → Low)</option>
+                  <option value="revenue_desc">GMV Revenue (High → Low)</option>
+                  <option value="skus_desc">Total SKUs (High → Low)</option>
+                  <option value="median_desc">Average Price (High → Low)</option>
+                  <option value="median_asc">Average Price (Low → High)</option>
+                </select>
+                <div class="cto-filter-help">Sort brands by key business metrics</div>
+              </div>
             </div>
 
-            <!-- Specific Brand Filter -->
-            <div class="cto-filter-group">
-              <label class="cto-filter-label">Brand Filter</label>
-              <input type="search" id="ctoBrandSearchInput" class="cto-select" placeholder="Search brand inside current scope..." oninput="filterCTOBrandOptions()" style="margin-bottom: 8px;" />
-              <select id="ctoBrandSelect" class="cto-select" onchange="triggerCTOFilter()">
-                <option value="all">All Brands</option>
-                <!-- Dynamically populated from database -->
-              </select>
-              <div id="ctoBrandHint" class="cto-filter-help" style="margin-top: 6px; font-size: 0.75rem; color: #64748b;">Brand options follow the active scope and can be searched before selecting.</div>
-            </div>
+            <div class="cto-filter-footer">
+              <div class="cto-active-filters">
+                <div class="cto-active-title">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M3 6h18"></path>
+                    <path d="M7 12h10"></path>
+                    <path d="M10 18h4"></path>
+                    <circle cx="7" cy="6" r="2"></circle>
+                    <circle cx="15" cy="12" r="2"></circle>
+                    <circle cx="12" cy="18" r="2"></circle>
+                  </svg>
+                  <span>Active Filters</span>
+                </div>
+                <div id="ctoActiveFilterPills" class="cto-active-pills">
+                  <span class="cto-empty-pill">No filters applied yet</span>
+                </div>
+              </div>
 
-            <!-- Brand Scale Tier Filter -->
-            <div class="cto-filter-group">
-              <label class="cto-filter-label">Brand Scale Tier</label>
-              <select id="ctoBrandScaleSelect" class="cto-select" onchange="triggerCTOFilter()">
-                <option value="all">All Scales (Largest & Small)</option>
-                <option value="largest" id="ctoBrandScaleOptionLargest">Largest Brands</option>
-                <option value="mid" id="ctoBrandScaleOptionMid">Mid-Tier Brands</option>
-                <option value="small" id="ctoBrandScaleOptionSmall">Small & Emerging</option>
-              </select>
-            </div>
-
-            <!-- Matrix Sorting Option -->
-            <div class="cto-filter-group">
-              <label class="cto-filter-label">Brand Matrix Sorting</label>
-              <select id="ctoSortSelect" class="cto-select" onchange="triggerCTOFilter()">
-                <option value="valuation_desc">Inventory Valuation (High → Low)</option>
-                <option value="revenue_desc">GMV Revenue (High → Low)</option>
-                <option value="skus_desc">Total SKUs (High → Low)</option>
-                <option value="median_desc">Average Price (High → Low)</option>
-                <option value="median_asc">Average Price (Low → High)</option>
-              </select>
-            </div>
-
-            <!-- Category Filter -->
-            <div class="cto-filter-group">
-              <label class="cto-filter-label">Category</label>
-              <select id="ctoCategorySelect" class="cto-select" onchange="triggerCTOFilter()">
-                <option value="all">All Categories</option>
-                <option value="shirts">Shirts</option>
-                <option value="jeans">Jeans &amp; Denims</option>
-                <option value="western-wear">Western Wear</option>
-              </select>
-            </div>
-
-            <!-- Gender Filter -->
-            <div class="cto-filter-group">
-              <label class="cto-filter-label">Gender</label>
-              <select id="ctoGenderSelect" class="cto-select" onchange="triggerCTOFilter()">
-                <option value="all">All Genders</option>
-                <option value="men">Men</option>
-                <option value="women">Women</option>
-                <option value="kids">Kids</option>
-              </select>
-            </div>
-
-            <!-- Brand Type Filter -->
-            <div class="cto-filter-group">
-              <label class="cto-filter-label">Brand Type</label>
-              <select id="ctoBrandTypeSelect" class="cto-select" onchange="triggerCTOFilter()">
-                <option value="all">All Brands</option>
-                <option value="myntra">Myntra In-House Labels</option>
-                <option value="non-myntra">External Brands</option>
-              </select>
+              <button class="cto-toolbar-btn cto-toolbar-btn-save" type="button" onclick="saveDashboardView(this)">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                  <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                  <polyline points="7 3 7 8 15 8"></polyline>
+                </svg>
+                <span>Save View</span>
+              </button>
             </div>
           </div>
         </div>
@@ -4462,6 +4575,6 @@
   </div>
 
   <script src="chart.min.js"></script>
-  <script src="app.js?v=5.5"></script>
+  <script src="app.js?v=5.8"></script>
 </body>
 </html>

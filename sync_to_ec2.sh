@@ -49,6 +49,7 @@ rsync -az --delete \
   --exclude "venv" \
   --exclude ".env" \
   --exclude "logs/*" \
+  --exclude "data/*" \
   --exclude "data/*.duckdb" \
   --exclude "data/*.duckdb.wal" \
   --exclude "*.db" \

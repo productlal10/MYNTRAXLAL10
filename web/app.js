@@ -193,6 +193,7 @@ let categoryIntelRequestSeq = 0;
 let priceIntelRequestSeq = 0;
 let hasLoadedCatalogMeta = false;
 const clientJsonCache = new Map();
+let _scraperStatusRequest = null;
 
 function invalidateClientJsonCache(prefix = '') {
   Array.from(clientJsonCache.keys()).forEach(key => {
@@ -546,13 +547,20 @@ const MAX_CTO_BRAND_OPTIONS_WITHOUT_SEARCH = 250;
 const CTO_FACETS_DEFER_MS = 900;
 let _ctoFacetDeferredTimer = null;
 let _ctoFacetInteractionBound = false;
+let _ctoBrandDropdownOpen = false;
 
 function readCTOFilterState() {
+  const brandInput = (document.getElementById('ctoBrandSearchInput')?.value || '').trim();
+  const brandSelect = document.getElementById('ctoBrandSelect');
+  const knownBrand = (_ctoFacetState.brands || []).find(b => b.value.toLowerCase() === brandInput.toLowerCase());
+  const resolvedBrand = brandInput
+    ? (knownBrand ? knownBrand.value : '')
+    : (brandSelect?.value || '');
   return {
     priceMin: document.getElementById('ctoPriceMin')?.value || '',
     priceMax: document.getElementById('ctoPriceMax')?.value || '',
     subcategory: document.getElementById('ctoSubcategorySelect')?.value || '',
-    brand: document.getElementById('ctoBrandSelect')?.value || '',
+    brand: resolvedBrand || '',
     brandScale: document.getElementById('ctoBrandScaleSelect')?.value || '',
     sortBy: document.getElementById('ctoSortSelect')?.value || '',
     category: document.getElementById('ctoCategorySelect')?.value || '',
@@ -577,19 +585,78 @@ function buildCTOQueryString(filters, { includeSort = true } = {}) {
 }
 
 function updateCTOFilterBadge(filters) {
-  const badgeEl = document.getElementById('ctoActiveFilterBadge');
-  if (!badgeEl) return;
-
   const badgeParts = [];
-  if (filters.category && filters.category !== 'all') badgeParts.push(filters.category.charAt(0).toUpperCase() + filters.category.slice(1));
+  if (filters.category && filters.category !== 'all') badgeParts.push(filters.category.charAt(0).toUpperCase() + filters.category.slice(1).replace('-', ' '));
+  if (filters.subcategory && filters.subcategory !== 'all') badgeParts.push(filters.subcategory);
   if (filters.gender && filters.gender !== 'all') badgeParts.push(filters.gender.charAt(0).toUpperCase() + filters.gender.slice(1));
   if (filters.brandType && filters.brandType !== 'all') badgeParts.push(filters.brandType === 'myntra' ? 'Myntra Labels' : 'External Brands');
   if (filters.priceMin || filters.priceMax) badgeParts.push(`₹${filters.priceMin || '0'} - ₹${filters.priceMax || '∞'}`);
   if (filters.brand && filters.brand !== 'all') badgeParts.push(`Brand: ${filters.brand}`);
-  if (filters.subcategory && filters.subcategory !== 'all') badgeParts.push(filters.subcategory);
   if (filters.brandScale && filters.brandScale !== 'all') badgeParts.push(filters.brandScale);
+  renderCTOActiveFilterPills(badgeParts);
+}
 
-  badgeEl.textContent = badgeParts.length > 0 ? `Scope: ${badgeParts.join(' • ')}` : 'Catalog Scope: All Products';
+function renderCTOActiveFilterPills(items = []) {
+  const pillsEl = document.getElementById('ctoActiveFilterPills');
+  if (!pillsEl) return;
+  if (!items.length) {
+    pillsEl.innerHTML = '<span class="cto-empty-pill">No filters applied yet</span>';
+    return;
+  }
+  pillsEl.innerHTML = items.map(item => `<span class="cto-active-pill">${escapeHtml(item)}</span>`).join('');
+}
+
+function updateCTOScopeCount(count = 0) {
+  const countEl = document.getElementById('ctoScopeBrandCount');
+  if (!countEl) return;
+  const safeCount = Number(count || 0);
+  countEl.textContent = `${safeCount.toLocaleString()} Brand${safeCount === 1 ? '' : 's'}`;
+}
+
+function applyDashboardFilters() {
+  closeCTOBrandDropdown();
+  fetchStatsAndInsights();
+}
+
+function resetDashboardFilters() {
+  const setVal = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.value = val;
+  };
+
+  setVal('ctoCategorySelect', 'all');
+  setVal('ctoSubcategorySelect', 'all');
+  setVal('ctoGenderSelect', 'all');
+  setVal('ctoBrandTypeSelect', 'all');
+  setVal('ctoPriceMin', '');
+  setVal('ctoPriceMax', '');
+  setVal('ctoBrandScaleSelect', 'all');
+  setVal('ctoBrandSearchInput', '');
+  setVal('ctoBrandSelect', 'all');
+  setVal('ctoSortSelect', 'valuation_desc');
+
+  applyCTOBrandOptions('all');
+  closeCTOBrandDropdown();
+  updateCTOFilterBadge(readCTOFilterState());
+  fetchStatsAndInsights();
+}
+
+function saveDashboardView(btnEl) {
+  const btn = btnEl || document.querySelector('.cto-toolbar-btn-save');
+  try {
+    localStorage.setItem('myntra.dashboard.savedView', JSON.stringify(readCTOFilterState()));
+    if (btn) {
+      const original = btn.innerHTML;
+      btn.classList.add('saved');
+      btn.innerHTML = '<span>Saved View</span>';
+      setTimeout(() => {
+        btn.classList.remove('saved');
+        btn.innerHTML = original;
+      }, 1400);
+    }
+  } catch (err) {
+    console.warn('Unable to save dashboard view:', err);
+  }
 }
 
 async function fetchJson(url, options = {}) {
@@ -701,6 +768,13 @@ function bindCTOFacetInteractions() {
       el.addEventListener(eventName, primeCTOFacetsFromInteraction, { passive: true });
     });
   });
+
+  document.addEventListener('click', (event) => {
+    const wrap = document.querySelector('.cto-brand-search-wrap');
+    if (wrap && !wrap.contains(event.target)) {
+      closeCTOBrandDropdown();
+    }
+  });
 }
 
 async function fetchStatsAndInsights() {
@@ -761,6 +835,7 @@ async function fetchStatsAndInsights() {
 let _ctoFilterDebounceTimer = null;
 function triggerCTOFilter() {
   if (_ctoFilterDebounceTimer) clearTimeout(_ctoFilterDebounceTimer);
+  updateCTOFilterBadge(readCTOFilterState());
   _ctoFilterDebounceTimer = setTimeout(() => {
     fetchStatsAndInsights();
   }, 120);
@@ -919,6 +994,7 @@ function renderSubcategoriesDropdown(insights) {
 
 function renderBrandsDropdown(insights) {
   const selectEl = document.getElementById('ctoBrandSelect');
+  const inputEl = document.getElementById('ctoBrandSearchInput');
   if (!selectEl) return false;
   const currentVal = String(selectEl.value || 'all').trim();
   const currentValLower = currentVal.toLowerCase();
@@ -935,14 +1011,20 @@ function renderBrandsDropdown(insights) {
     ? 'all'
     : (valueMap.get(currentValLower) || 'all');
   applyCTOBrandOptions(resolvedValue);
+  if (inputEl && resolvedValue !== 'all' && !inputEl.value.trim()) {
+    inputEl.value = resolvedValue;
+  }
   return String(resolvedValue).toLowerCase() !== currentValLower;
 }
 
 function applyCTOBrandOptions(selectedValue = 'all') {
   const selectEl = document.getElementById('ctoBrandSelect');
+  const inputEl = document.getElementById('ctoBrandSearchInput');
+  const metaEl = document.getElementById('ctoBrandDropdownMeta');
   if (!selectEl) return;
 
-  const searchTerm = (document.getElementById('ctoBrandSearchInput')?.value || '').trim().toLowerCase();
+  const rawSearchTerm = (inputEl?.value || '').trim();
+  const searchTerm = rawSearchTerm.toLowerCase();
   const allBrands = _ctoFacetState.brands || [];
   let visibleBrands = searchTerm
     ? allBrands.filter(b => b.value.toLowerCase().includes(searchTerm))
@@ -969,8 +1051,27 @@ function applyCTOBrandOptions(selectedValue = 'all') {
     html += '<option value="" disabled>No brands match this search</option>';
   }
 
+  const exactMatch = allBrands.find(b => b.value.toLowerCase() === searchTerm);
+  const effectiveSelectedValue = rawSearchTerm && !exactMatch
+    ? 'all'
+    : (exactMatch?.value || selectedValue || 'all');
   selectEl.innerHTML = html;
-  selectEl.value = selectedValue || 'all';
+  selectEl.value = effectiveSelectedValue;
+  renderCTOBrandDropdownList(visibleBrands, effectiveSelectedValue, {
+    totalBrands: allBrands.length,
+    searchTerm: rawSearchTerm
+  });
+  if (metaEl) {
+    metaEl.textContent = rawSearchTerm
+      ? `${visibleBrands.length.toLocaleString()} match${visibleBrands.length === 1 ? '' : 'es'}`
+      : `${allBrands.length.toLocaleString()} in scope`;
+  }
+  if (inputEl && exactMatch && rawSearchTerm !== exactMatch.value) {
+    inputEl.value = exactMatch.value;
+  }
+  if (inputEl && !rawSearchTerm && (!selectedValue || selectedValue === 'all')) {
+    inputEl.value = '';
+  }
 }
 
 function filterCTOBrandOptions() {
@@ -980,12 +1081,86 @@ function filterCTOBrandOptions() {
 
   const currentVal = document.getElementById('ctoBrandSelect')?.value || 'all';
   applyCTOBrandOptions(currentVal);
+  openCTOBrandDropdown();
   renderCTOFilterHints({
     cto_filter_meta: {
       available_brand_count: (_ctoFacetState.brands || []).length,
       available_subcategory_count: (_ctoFacetState.subcategories || []).length
     }
   });
+}
+
+function renderCTOBrandDropdownList(visibleBrands, selectedValue = 'all', { totalBrands = 0, searchTerm = '' } = {}) {
+  const listEl = document.getElementById('ctoBrandDropdownList');
+  if (!listEl) return;
+
+  const normalizedSelected = String(selectedValue || 'all').toLowerCase();
+  let html = `
+    <button type="button" class="cto-brand-option ${normalizedSelected === 'all' ? 'active' : ''}" onclick="selectCTOBrandOption('all')">
+      <span class="cto-brand-option-name">All Brands</span>
+      <span class="cto-brand-option-count">${totalBrands.toLocaleString()}</span>
+    </button>
+  `;
+
+  if (!visibleBrands.length) {
+    html += `<div class="cto-brand-empty-state">No brands match "${escapeHtml(searchTerm)}".</div>`;
+  } else {
+    html += visibleBrands.map(brand => {
+      const active = brand.value.toLowerCase() === normalizedSelected ? 'active' : '';
+      return `
+        <button type="button" class="cto-brand-option ${active}" data-brand="${escapeHtml(brand.value)}" onclick="selectCTOBrandOption(this.dataset.brand)">
+          <span class="cto-brand-option-name">${escapeHtml(brand.value)}</span>
+          <span class="cto-brand-option-count">${brand.count.toLocaleString()}</span>
+        </button>
+      `;
+    }).join('');
+  }
+
+  if (!searchTerm && totalBrands > visibleBrands.length) {
+    html += `<div class="cto-brand-dropdown-note">Showing first ${visibleBrands.length.toLocaleString()} brands. Start typing to narrow the list.</div>`;
+  }
+
+  listEl.innerHTML = html;
+}
+
+function selectCTOBrandOption(value) {
+  const nextValue = value === 'all' ? 'all' : String(value || '');
+  const selectEl = document.getElementById('ctoBrandSelect');
+  const inputEl = document.getElementById('ctoBrandSearchInput');
+  if (!selectEl) return;
+  selectEl.value = nextValue;
+  if (inputEl) {
+    inputEl.value = nextValue === 'all' ? '' : nextValue;
+  }
+  applyCTOBrandOptions(nextValue);
+  closeCTOBrandDropdown();
+  triggerCTOFilter();
+}
+
+function openCTOBrandDropdown() {
+  const dropdownEl = document.getElementById('ctoBrandDropdown');
+  if (!dropdownEl) return;
+  dropdownEl.hidden = false;
+  _ctoBrandDropdownOpen = true;
+}
+
+function closeCTOBrandDropdown() {
+  const dropdownEl = document.getElementById('ctoBrandDropdown');
+  if (!dropdownEl) return;
+  dropdownEl.hidden = true;
+  _ctoBrandDropdownOpen = false;
+}
+
+function toggleCTOBrandDropdown() {
+  if (_ctoBrandDropdownOpen) {
+    closeCTOBrandDropdown();
+    return;
+  }
+  if (!_ctoFacetState.brands.length && !_ctoFacetState.loading) {
+    primeCTOFacetsFromInteraction();
+  }
+  applyCTOBrandOptions(document.getElementById('ctoBrandSelect')?.value || 'all');
+  openCTOBrandDropdown();
 }
 
 function renderCTOFilterHints(insights) {
@@ -1000,6 +1175,8 @@ function renderCTOFilterHints(insights) {
   const visibleBrands = brandSearchTerm
     ? (_ctoFacetState.brands || []).filter(b => b.value.toLowerCase().includes(brandSearchTerm.toLowerCase())).length
     : totalBrands;
+
+  updateCTOScopeCount(totalBrands);
 
   if (_ctoFacetState.loading && totalBrands === 0 && totalSubcats === 0) {
     if (brandHintEl) {
@@ -1055,6 +1232,7 @@ function renderDashboardKPIs(stats, insights) {
   const inStock = Number(stats.in_stock || 0);
   const inStockPct = total > 0 ? ((inStock / total) * 100).toFixed(1) : '0.0';
   const trends = stats.trends || {};
+  updateCTOScopeCount(Number(stats.total_brands || 0));
 
   const setTxt = (id, text) => {
     const el = document.getElementById(id);
@@ -4755,87 +4933,99 @@ async function cleanDatabaseUI() {
 }
 
 async function checkScraperStatus() {
-  try {
-    const res = await fetch('/api/scraper/status');
-    const data = await res.json();
-    const isRunning = !!data.running;
-    const pid = data.pid || (data.pids && data.pids[0]);
-
-    // Top Header Pill
-    const pill = document.getElementById('headerScraperPill');
-    const dot = document.getElementById('headerScraperDot');
-    const txt = document.getElementById('headerScraperText');
-
-    if (isRunning) {
-      if (pill) pill.className = 'scraper-status-pill running';
-      if (dot) dot.style.background = '#10b981';
-      if (txt) txt.textContent = `Scraper Running (PID ${pid})`;
-    } else {
-      if (pill) pill.className = 'scraper-status-pill';
-      if (dot) dot.style.background = '#94a3b8';
-      if (txt) txt.textContent = 'Scraper Idle';
-    }
-
-    // Modal elements
-    const modalDot = document.getElementById('modalStatusDot');
-    const modalBanner = document.getElementById('modalRunningBanner');
-    const modalPid = document.getElementById('modalRunningPid');
-    const btnStopModal = document.getElementById('btnStopScraperModal');
-    const btnStartModal = document.getElementById('btnStartScraperModal');
-
-    if (modalDot) modalDot.style.background = isRunning ? '#10b981' : '#94a3b8';
-    if (modalBanner) modalBanner.style.display = isRunning ? 'block' : 'none';
-    if (modalPid) modalPid.textContent = pid || '--';
-    if (btnStopModal) btnStopModal.style.display = isRunning ? 'inline-flex' : 'none';
-    if (btnStartModal) {
-      btnStartModal.textContent = isRunning ? 'Restart / Relaunch Engine' : '🚀 Start Scraper Engine';
-    }
-
-    // Scraper Console View Elements
-    const consoleStatusText = document.getElementById('consoleStatusText');
-    const consoleStatusIcon = document.getElementById('consoleStatusIcon');
-    const consoleStatusSubtext = document.getElementById('consoleStatusSubtext');
-    const consolePidText = document.getElementById('consolePidText');
-    const consoleStartedText = document.getElementById('consoleStartedText');
-    const btnConsoleStop = document.getElementById('btnConsoleStopScraper');
-    const btnConsoleStart = document.getElementById('btnConsoleStartScraper');
-
-    if (consoleStatusText) {
-      consoleStatusText.textContent = isRunning ? 'RUNNING' : 'IDLE';
-      consoleStatusText.style.color = isRunning ? '#10b981' : '#64748b';
-    }
-    if (consoleStatusIcon) consoleStatusIcon.textContent = isRunning ? '🟢' : '⚪';
-    if (consoleStatusSubtext) consoleStatusSubtext.textContent = isRunning ? 'Actively ingesting products' : 'Process not running';
-    if (consolePidText) consolePidText.textContent = isRunning ? pid : '--';
-    if (consoleStartedText) {
-      if (isRunning && data.meta && data.meta.started_at) {
-        consoleStartedText.textContent = `Started ${data.meta.started_at}`;
-      } else {
-        consoleStartedText.textContent = isRunning ? 'Active now' : 'Ready to scrape';
-      }
-    }
-    if (btnConsoleStop) btnConsoleStop.style.display = isRunning ? 'inline-flex' : 'none';
-    if (btnConsoleStart) {
-      btnConsoleStart.textContent = isRunning ? '⚙️ Modify Config' : '▶ Start Scraper';
-    }
-
-    // Console database counters
-    const statsRes = await fetch('/api/stats').then(r => r.json()).catch(() => null);
-    if (statsRes) {
-      const consoleProds = document.getElementById('consoleProductsText');
-      const consoleInStock = document.getElementById('consoleInStockText');
-      const consoleBrands = document.getElementById('consoleBrandsText');
-      const totalProds = statsRes.total_products || 0;
-      const inStock = statsRes.in_stock || 0;
-      const brandsCount = statsRes.total_brands || 0;
-
-      if (consoleProds) consoleProds.textContent = totalProds.toLocaleString();
-      if (consoleInStock) consoleInStock.textContent = `${inStock.toLocaleString()} In-Stock`;
-      if (consoleBrands) consoleBrands.textContent = brandsCount.toLocaleString();
-    }
-  } catch (err) {
-    // Ignore network error on periodic poll
+  if (_scraperStatusRequest) {
+    return _scraperStatusRequest;
   }
+
+  _scraperStatusRequest = (async () => {
+    try {
+      const res = await fetch('/api/scraper/status');
+      const data = await res.json();
+      const isRunning = !!data.running;
+      const pid = data.pid || (data.pids && data.pids[0]);
+
+      // Top Header Pill
+      const pill = document.getElementById('headerScraperPill');
+      const dot = document.getElementById('headerScraperDot');
+      const txt = document.getElementById('headerScraperText');
+
+      if (isRunning) {
+        if (pill) pill.className = 'scraper-status-pill running';
+        if (dot) dot.style.background = '#10b981';
+        if (txt) txt.textContent = `Scraper Running (PID ${pid})`;
+      } else {
+        if (pill) pill.className = 'scraper-status-pill';
+        if (dot) dot.style.background = '#94a3b8';
+        if (txt) txt.textContent = 'Scraper Idle';
+      }
+
+      // Modal elements
+      const modalDot = document.getElementById('modalStatusDot');
+      const modalBanner = document.getElementById('modalRunningBanner');
+      const modalPid = document.getElementById('modalRunningPid');
+      const btnStopModal = document.getElementById('btnStopScraperModal');
+      const btnStartModal = document.getElementById('btnStartScraperModal');
+
+      if (modalDot) modalDot.style.background = isRunning ? '#10b981' : '#94a3b8';
+      if (modalBanner) modalBanner.style.display = isRunning ? 'block' : 'none';
+      if (modalPid) modalPid.textContent = pid || '--';
+      if (btnStopModal) btnStopModal.style.display = isRunning ? 'inline-flex' : 'none';
+      if (btnStartModal) {
+        btnStartModal.textContent = isRunning ? 'Restart / Relaunch Engine' : '🚀 Start Scraper Engine';
+      }
+
+      // Scraper Console View Elements
+      const consoleStatusText = document.getElementById('consoleStatusText');
+      const consoleStatusIcon = document.getElementById('consoleStatusIcon');
+      const consoleStatusSubtext = document.getElementById('consoleStatusSubtext');
+      const consolePidText = document.getElementById('consolePidText');
+      const consoleStartedText = document.getElementById('consoleStartedText');
+      const btnConsoleStop = document.getElementById('btnConsoleStopScraper');
+      const btnConsoleStart = document.getElementById('btnConsoleStartScraper');
+
+      if (consoleStatusText) {
+        consoleStatusText.textContent = isRunning ? 'RUNNING' : 'IDLE';
+        consoleStatusText.style.color = isRunning ? '#10b981' : '#64748b';
+      }
+      if (consoleStatusIcon) consoleStatusIcon.textContent = isRunning ? '🟢' : '⚪';
+      if (consoleStatusSubtext) consoleStatusSubtext.textContent = isRunning ? 'Actively ingesting products' : 'Process not running';
+      if (consolePidText) consolePidText.textContent = isRunning ? pid : '--';
+      if (consoleStartedText) {
+        if (isRunning && data.meta && data.meta.started_at) {
+          consoleStartedText.textContent = `Started ${data.meta.started_at}`;
+        } else {
+          consoleStartedText.textContent = isRunning ? 'Active now' : 'Ready to scrape';
+        }
+      }
+      if (btnConsoleStop) btnConsoleStop.style.display = isRunning ? 'inline-flex' : 'none';
+      if (btnConsoleStart) {
+        btnConsoleStart.textContent = isRunning ? '⚙️ Modify Config' : '▶ Start Scraper';
+      }
+
+      // Console database counters are only needed on the console view.
+      if (currentView === 'console') {
+        const statsRes = await fetchCachedJson('/api/stats', { ttlMs: 60000 }).catch(() => null);
+        if (statsRes) {
+          const consoleProds = document.getElementById('consoleProductsText');
+          const consoleInStock = document.getElementById('consoleInStockText');
+          const consoleBrands = document.getElementById('consoleBrandsText');
+          const totalProds = statsRes.total_products || 0;
+          const inStock = statsRes.in_stock || 0;
+          const brandsCount = statsRes.total_brands || 0;
+
+          if (consoleProds) consoleProds.textContent = totalProds.toLocaleString();
+          if (consoleInStock) consoleInStock.textContent = `${inStock.toLocaleString()} In-Stock`;
+          if (consoleBrands) consoleBrands.textContent = brandsCount.toLocaleString();
+        }
+      }
+    } catch (err) {
+      // Ignore network error on periodic poll
+    } finally {
+      _scraperStatusRequest = null;
+    }
+  })();
+
+  return _scraperStatusRequest;
 }
 
 function startLogStream() {

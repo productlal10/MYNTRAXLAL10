@@ -178,7 +178,15 @@ class _PGConnection:
         cur.execute(sql, params)
         return cur
 
+    def executemany(self, sql, seq):
+        cur = self.cursor()
+        cur.executemany(sql, seq)
+        return cur
+
     def commit(self):
+        pass  # autocommit=True
+
+    def rollback(self):
         pass  # autocommit=True
 
     def close(self):
@@ -750,6 +758,17 @@ class Database:
         """, (today_str,))
         prev_row = cur.fetchone()
         prev_date = prev_row[0] if prev_row else None
+        if isinstance(prev_date, datetime):
+            prev_date = prev_date.date()
+        if isinstance(prev_date, date):
+            prev_date_value = prev_date
+            prev_date_param = prev_date.isoformat()
+        else:
+            prev_date_param = prev_date
+            try:
+                prev_date_value = date.fromisoformat(prev_date) if prev_date else None
+            except (TypeError, ValueError):
+                prev_date_value = None
 
         total_units_sold = 0
         total_revenue = 0.0
@@ -763,11 +782,11 @@ class Database:
                 SELECT product_id, total_stock, selling_price
                 FROM daily_inventory_snapshots
                 WHERE snapshot_date = ?;
-            """, (prev_date,))
+            """, (prev_date_param,))
             prev_map = {r[0]: (r[1], r[2]) for r in cur.fetchall()}
 
             try:
-                days_gap = max(1, (date.fromisoformat(today_str) - date.fromisoformat(prev_date)).days)
+                days_gap = max(1, (date.fromisoformat(today_str) - prev_date_value).days) if prev_date_value else 1
             except ValueError:
                 days_gap = 1
 

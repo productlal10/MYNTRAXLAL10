@@ -7,6 +7,7 @@ import ast
 import json
 import base64
 import re
+import fcntl
 import subprocess
 import signal
 import time
@@ -97,9 +98,73 @@ class TTLCache:
             self._cache.clear()
 
 api_cache = TTLCache(default_ttl=15.0)
+SHARED_API_CACHE_DIR = BASE_DIR / "tmp" / "api_response_cache"
 
 LARGE_BRAND_MIN_PRODUCTS = 1000
 MID_BRAND_MIN_PRODUCTS = 200
+
+
+def _shared_cache_file(cache_key: str) -> Path:
+    digest = hashlib.sha256(cache_key.encode("utf-8")).hexdigest()
+    return SHARED_API_CACHE_DIR / f"{digest}.json"
+
+
+def _load_shared_cache(cache_key: str):
+    path = _shared_cache_file(cache_key)
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text("utf-8"))
+    except Exception:
+        return None
+    expires_at = float(payload.get("expires_at") or 0)
+    if time.time() >= expires_at:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        return None
+    return payload.get("value")
+
+
+def _store_shared_cache(cache_key: str, value, ttl: float):
+    SHARED_API_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    path = _shared_cache_file(cache_key)
+    tmp_path = path.with_suffix(".tmp")
+    payload = {
+        "expires_at": time.time() + ttl,
+        "value": value,
+    }
+    tmp_path.write_text(json.dumps(payload, separators=(",", ":"), default=str), encoding="utf-8")
+    os.replace(tmp_path, path)
+
+
+def get_or_compute_cached_payload(cache_key: str, loader, ttl: float = 60.0, shared: bool = False):
+    cached = api_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    if not shared:
+        value = loader()
+        api_cache.set(cache_key, value, ttl=ttl)
+        return value
+
+    SHARED_API_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    lock_path = _shared_cache_file(cache_key).with_suffix(".lock")
+    with open(lock_path, "w", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        cached = api_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        shared_cached = _load_shared_cache(cache_key)
+        if shared_cached is not None:
+            api_cache.set(cache_key, shared_cached, ttl=ttl)
+            return shared_cached
+
+        value = loader()
+        api_cache.set(cache_key, value, ttl=ttl)
+        _store_shared_cache(cache_key, value, ttl=ttl)
+        return value
 
 
 def _safe_int(value, default: int = 0) -> int:
@@ -900,14 +965,6 @@ def get_stats():
         filter_brand_type = filters["brand_type"]
 
         cache_key = f"stats_v2:{filter_category}:{filter_gender}:{filter_subcategory}:{filter_brand}:{filter_brand_scale}:{filter_price_min}:{filter_price_max}:{filter_brand_type}"
-        cached = api_cache.get(cache_key)
-        if cached:
-            return jsonify(cached)
-
-        conn = db._get_connection()
-        cur = conn.cursor()
-
-        where_sql, where_params = _build_cto_scope(filters)
         has_scope_filters = any([
             filter_category and filter_category != "all",
             filter_gender and filter_gender != "all",
@@ -919,83 +976,92 @@ def get_stats():
             filter_brand_type and filter_brand_type != "all",
         ])
 
-        if has_scope_filters:
-            cur.execute(f"""
-                SELECT 
-                    COUNT(*) as total_products,
-                    COUNT(DISTINCT brand) as total_brands,
-                    COUNT(DISTINCT CASE WHEN is_myntra_label = 1 THEN brand END) as myntra_brands_count,
-                    COUNT(DISTINCT CASE WHEN is_myntra_label = 0 THEN brand END) as non_myntra_brands_count,
-                    SUM(CASE WHEN is_in_stock = 1 THEN 1 ELSE 0 END) as in_stock,
-                    ROUND(AVG(selling_price), 2) as avg_price,
-                    ROUND(AVG(mrp), 2) as avg_mrp,
-                    ROUND(AVG(discount_percentage), 1) as avg_discount
-                FROM products p
-                WHERE {where_sql};
-            """, where_params)
-            r = cur.fetchone()
+        def build_stats_payload():
+            conn = db._get_connection()
+            cur = conn.cursor()
+            where_sql, where_params = _build_cto_scope(filters)
 
-            total_products = int(r[0] or 0)
-            total_brands = int(r[1] or 0)
-            myntra_brands_count = int(r[2] or 0)
-            non_myntra_brands_count = int(r[3] or 0)
-            in_stock = int(r[4] or 0)
-            avg_price = float(r[5] or 0.0)
-            avg_mrp = float(r[6] or 0.0)
-            avg_discount = float(r[7] or 0.0)
-        else:
-            cur.execute("""
-                SELECT
-                    COUNT(*) as total_products,
-                    SUM(CASE WHEN is_in_stock = 1 THEN 1 ELSE 0 END) as in_stock,
-                    ROUND(AVG(selling_price), 2) as avg_price,
-                    ROUND(AVG(mrp), 2) as avg_mrp,
-                    ROUND(AVG(discount_percentage), 1) as avg_discount
-                FROM products;
-            """)
-            r = cur.fetchone()
-            total_products = int(r[0] or 0)
-            in_stock = int(r[1] or 0)
-            avg_price = float(r[2] or 0.0)
-            avg_mrp = float(r[3] or 0.0)
-            avg_discount = float(r[4] or 0.0)
+            if has_scope_filters:
+                cur.execute(f"""
+                    SELECT 
+                        COUNT(*) as total_products,
+                        COUNT(DISTINCT brand) as total_brands,
+                        COUNT(DISTINCT CASE WHEN is_myntra_label = 1 THEN brand END) as myntra_brands_count,
+                        COUNT(DISTINCT CASE WHEN is_myntra_label = 0 THEN brand END) as non_myntra_brands_count,
+                        SUM(CASE WHEN is_in_stock = 1 THEN 1 ELSE 0 END) as in_stock,
+                        ROUND(AVG(selling_price), 2) as avg_price,
+                        ROUND(AVG(mrp), 2) as avg_mrp,
+                        ROUND(AVG(discount_percentage), 1) as avg_discount
+                    FROM products p
+                    WHERE {where_sql};
+                """, where_params)
+                r = cur.fetchone()
 
-            cur.execute("""
-                SELECT
-                    COUNT(*) as total_brands,
-                    SUM(CASE WHEN is_myntra_label = 1 THEN 1 ELSE 0 END) as myntra_brands_count,
-                    SUM(CASE WHEN is_myntra_label = 0 THEN 1 ELSE 0 END) as non_myntra_brands_count
-                FROM brands
-                WHERE brand_name IS NOT NULL AND brand_name != '';
-            """)
-            brand_row = cur.fetchone() or {}
-            total_brands = int(brand_row["total_brands"] or 0)
-            myntra_brands_count = int(brand_row["myntra_brands_count"] or 0)
-            non_myntra_brands_count = int(brand_row["non_myntra_brands_count"] or 0)
-        total_warehouse_units = _get_scoped_inventory_units(cur, where_sql, where_params)
+                total_products = int(r[0] or 0)
+                total_brands = int(r[1] or 0)
+                myntra_brands_count = int(r[2] or 0)
+                non_myntra_brands_count = int(r[3] or 0)
+                in_stock = int(r[4] or 0)
+                avg_price = float(r[5] or 0.0)
+                avg_mrp = float(r[6] or 0.0)
+                avg_discount = float(r[7] or 0.0)
+            else:
+                cur.execute("""
+                    SELECT
+                        COUNT(*) as total_products,
+                        SUM(CASE WHEN is_in_stock = 1 THEN 1 ELSE 0 END) as in_stock,
+                        ROUND(AVG(selling_price), 2) as avg_price,
+                        ROUND(AVG(mrp), 2) as avg_mrp,
+                        ROUND(AVG(discount_percentage), 1) as avg_discount
+                    FROM products;
+                """)
+                r = cur.fetchone()
+                total_products = int(r[0] or 0)
+                in_stock = int(r[1] or 0)
+                avg_price = float(r[2] or 0.0)
+                avg_mrp = float(r[3] or 0.0)
+                avg_discount = float(r[4] or 0.0)
 
-        trends = {
-            "products_delta_pct": None,
-            "brands_delta_pct": None,
-            "inventory_delta_pct": None,
-            "price_delta_pct": None,
-            "discount_delta_pct": None
-        }
+                cur.execute("""
+                    SELECT
+                        COUNT(*) as total_brands,
+                        SUM(CASE WHEN is_myntra_label = 1 THEN 1 ELSE 0 END) as myntra_brands_count,
+                        SUM(CASE WHEN is_myntra_label = 0 THEN 1 ELSE 0 END) as non_myntra_brands_count
+                    FROM brands
+                    WHERE brand_name IS NOT NULL AND brand_name != '';
+                """)
+                brand_row = cur.fetchone() or {}
+                total_brands = int(brand_row["total_brands"] or 0)
+                myntra_brands_count = int(brand_row["myntra_brands_count"] or 0)
+                non_myntra_brands_count = int(brand_row["non_myntra_brands_count"] or 0)
 
-        stats = {
-            "total_products": total_products,
-            "total_brands": total_brands,
-            "total_discovered_brands": total_brands,
-            "myntra_brands_count": myntra_brands_count,
-            "non_myntra_brands_count": non_myntra_brands_count,
-            "in_stock": in_stock,
-            "total_warehouse_units": total_warehouse_units,
-            "average_price": avg_price,
-            "average_mrp": avg_mrp,
-            "average_discount": avg_discount,
-            "trends": trends
-        }
-        api_cache.set(cache_key, stats, ttl=600.0)
+            total_warehouse_units = _get_scoped_inventory_units(cur, where_sql, where_params)
+            return {
+                "total_products": total_products,
+                "total_brands": total_brands,
+                "total_discovered_brands": total_brands,
+                "myntra_brands_count": myntra_brands_count,
+                "non_myntra_brands_count": non_myntra_brands_count,
+                "in_stock": in_stock,
+                "total_warehouse_units": total_warehouse_units,
+                "average_price": avg_price,
+                "average_mrp": avg_mrp,
+                "average_discount": avg_discount,
+                "trends": {
+                    "products_delta_pct": None,
+                    "brands_delta_pct": None,
+                    "inventory_delta_pct": None,
+                    "price_delta_pct": None,
+                    "discount_delta_pct": None
+                }
+            }
+
+        stats = get_or_compute_cached_payload(
+            cache_key,
+            build_stats_payload,
+            ttl=600.0,
+            shared=not has_scope_filters
+        )
         return jsonify(stats)
     except Exception as exc:
         app.logger.exception("Failed to load stats")
@@ -1205,12 +1271,12 @@ def _get_cto_facets_cache_key(filters):
 
 def _get_cached_cto_facets(cur, filters):
     cache_key = _get_cto_facets_cache_key(filters)
-    cached = api_cache.get(cache_key)
-    if cached:
-        return cached
-    result = _load_cto_facets(cur, filters)
-    api_cache.set(cache_key, result, ttl=600.0)
-    return result
+    return get_or_compute_cached_payload(
+        cache_key,
+        lambda: _load_cto_facets(cur, filters),
+        ttl=600.0,
+        shared=True
+    )
 
 
 @app.route("/api/insights/facets")
@@ -1235,9 +1301,10 @@ def get_insights():
     filter_sort_by = filters["sort_by"]
 
     cache_key = f"insights_v4:{filter_category}:{filter_gender}:{filter_subcategory}:{filter_brand}:{filter_brand_type}:{filter_brand_scale}:{filter_price_min}:{filter_price_max}:{filter_sort_by}"
-    cached = api_cache.get(cache_key)
-    if cached:
-        return jsonify(cached)
+    cached_payload = _load_shared_cache(cache_key)
+    if cached_payload is not None:
+        api_cache.set(cache_key, cached_payload, ttl=600.0)
+        return jsonify(cached_payload)
 
     conn = db._get_connection()
     cur = conn.cursor()
@@ -1986,6 +2053,7 @@ def get_insights():
     }
 
     api_cache.set(cache_key, insights_result, ttl=600.0)
+    _store_shared_cache(cache_key, insights_result, ttl=600.0)
     return jsonify(insights_result)
 
 
@@ -2002,22 +2070,27 @@ def get_latest_two_snapshot_dates(cur):
     return today_str, yest_str
 
 
-@app.route("/api/snapshot-dates")
-def get_snapshot_dates_route():
-    cached = api_cache.get("snapshot_dates_v1")
-    if cached:
-        return jsonify(cached)
+def _build_snapshot_dates_payload():
     conn = db._get_connection()
     cur = conn.cursor()
     cur.execute("SELECT DISTINCT snapshot_date FROM daily_inventory_snapshots ORDER BY snapshot_date DESC;")
     dates = [r[0] for r in cur.fetchall()]
-    payload = {
+    return {
         "status": "success",
         "dates": dates,
         "latest": dates[0] if dates else None,
         "previous": dates[1] if len(dates) > 1 else (dates[0] if dates else None)
     }
-    api_cache.set("snapshot_dates_v1", payload, ttl=1800.0)
+
+
+@app.route("/api/snapshot-dates")
+def get_snapshot_dates_route():
+    payload = get_or_compute_cached_payload(
+        "snapshot_dates_v1",
+        lambda: _build_snapshot_dates_payload(),
+        ttl=1800.0,
+        shared=True
+    )
     return jsonify(payload)
 
 
@@ -2042,8 +2115,9 @@ def get_products():
     view_mode = (request.args.get("view_mode") or "grid").strip().lower()
 
     cache_key = f"products:{request.query_string.decode('utf-8', errors='ignore')}"
-    cached = api_cache.get(cache_key)
-    if cached:
+    cached = _load_shared_cache(cache_key)
+    if cached is not None:
+        api_cache.set(cache_key, cached, ttl=30.0)
         return jsonify(cached)
 
     conn = db._get_connection()
@@ -2272,6 +2346,7 @@ def get_products():
         "pages": max(1, (total_count + per_page - 1) // per_page)
     }
     api_cache.set(cache_key, response_payload, ttl=30.0)
+    _store_shared_cache(cache_key, response_payload, ttl=30.0)
     return jsonify(response_payload)
 
 
@@ -2303,14 +2378,12 @@ def get_catalog_meta():
     }
 
     cache_key = f"catalog_meta:{request.query_string.decode('utf-8', errors='ignore')}"
-    cached = api_cache.get(cache_key)
-    if cached:
-        return jsonify(cached)
-
-    conn = db._get_connection()
-    cur = conn.cursor()
-    payload = _build_catalog_meta_payload(cur, filters)
-    api_cache.set(cache_key, payload, ttl=30.0)
+    payload = get_or_compute_cached_payload(
+        cache_key,
+        lambda: _build_catalog_meta_payload(db._get_connection().cursor(), filters),
+        ttl=30.0,
+        shared=True
+    )
     return jsonify(payload)
 
 
@@ -2543,8 +2616,9 @@ def get_daily_sales_ros_analytics():
     search = request.args.get("search", "").strip().lower()
 
     cache_key = f"daily_sales_ros_v3:{category}:{gender}:{days}:{status_filter}:{search}"
-    cached = api_cache.get(cache_key)
-    if cached:
+    cached = _load_shared_cache(cache_key)
+    if cached is not None:
+        api_cache.set(cache_key, cached, ttl=300.0)
         return jsonify(cached)
 
     conn = db._get_connection()
@@ -2865,6 +2939,7 @@ def get_daily_sales_ros_analytics():
     }
 
     api_cache.set(cache_key, result, ttl=300.0)
+    _store_shared_cache(cache_key, result, ttl=300.0)
     return jsonify(result)
 
 
@@ -5270,8 +5345,9 @@ def get_brands_intelligence():
     new_arrivals = request.args.get("new_arrivals", "").strip()
 
     cache_key = f"brands_intel_v6:{category.lower()}:{gender.lower()}:{subcategory}:{price_min}:{price_max}:{price_ranges}:{brand_size}:{brand_type}:{brand}:{color}:{fabric}:{fit}:{discount_min}:{rating_min}:{availability}:{new_arrivals}"
-    cached = api_cache.get(cache_key)
-    if cached:
+    cached = _load_shared_cache(cache_key)
+    if cached is not None:
+        api_cache.set(cache_key, cached, ttl=300.0)
         return jsonify(cached)
 
     conn = db._get_connection()
@@ -5778,6 +5854,7 @@ def get_brands_intelligence():
         "subcategories": sb_data.get("subcategories", [])
     }
     api_cache.set(cache_key, result, ttl=300.0)
+    _store_shared_cache(cache_key, result, ttl=300.0)
     return jsonify(result)
 
 
@@ -7252,36 +7329,31 @@ def get_filter_counts():
     sections = (request.args.get("sections") or "").strip().lower()
 
     cache_key = f"filter_counts_v2:{sections}:{category}:{gender}:{subcategory}:{price_min}:{price_max}:{price_ranges}:{brand_size}:{brand_type}:{brand}:{color}:{fabric}:{fit}:{discount_min}:{rating_min}:{availability}:{new_arrivals}:{sustainability}:{search}:{tab}"
-    cached = api_cache.get(cache_key)
-    if cached:
-        return jsonify(cached)
-
-    conn = db._get_connection()
-    cur = conn.cursor()
-
-    filter_payload = _build_filter_counts_payload(cur, {
-        "category": category,
-        "gender": gender,
-        "subcategory": subcategory,
-        "price_min": price_min,
-        "price_max": price_max,
-        "price_ranges": price_ranges,
-        "brand_size": brand_size,
-        "brand_type": brand_type,
-        "brand": brand,
-        "color": color,
-        "fabric": fabric,
-        "fit": fit,
-        "discount_min": discount_min,
-        "rating_min": rating_min,
-        "availability": availability,
-        "new_arrivals": new_arrivals,
-        "search": search,
-        "tab": tab
-    }, sustainability=sustainability, include_subcategories=(sections != "fabric"))
-
-    res = filter_payload
-    api_cache.set(cache_key, res, ttl=900.0)
+    res = get_or_compute_cached_payload(
+        cache_key,
+        lambda: _build_filter_counts_payload(db._get_connection().cursor(), {
+            "category": category,
+            "gender": gender,
+            "subcategory": subcategory,
+            "price_min": price_min,
+            "price_max": price_max,
+            "price_ranges": price_ranges,
+            "brand_size": brand_size,
+            "brand_type": brand_type,
+            "brand": brand,
+            "color": color,
+            "fabric": fabric,
+            "fit": fit,
+            "discount_min": discount_min,
+            "rating_min": rating_min,
+            "availability": availability,
+            "new_arrivals": new_arrivals,
+            "search": search,
+            "tab": tab
+        }, sustainability=sustainability, include_subcategories=(sections != "fabric")),
+        ttl=900.0,
+        shared=True
+    )
     return jsonify(res)
 
 
