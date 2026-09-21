@@ -288,21 +288,7 @@ async function initApp() {
 
   setInterval(() => {
     if (currentView === 'dashboard' && !_insightsLoading) {
-      _insightsLoading = true;
-      const qs = buildCTOQueryString(readCTOFilterState());
-      fetch('/api/insights' + qs)
-        .then(r => r.json())
-        .then(i => {
-          _insightsLoading = false;
-          if (_cachedStats) renderDashboardKPIs(_cachedStats, i);
-          renderCategoryDonut(i);
-          renderPriceBandBar(i);
-          renderGeographicDemand(i);
-          renderTrendingBrands(i);
-          renderInventoryHeatmap(i);
-          renderAiMarketInsights(i);
-        })
-        .catch(() => { _insightsLoading = false; });
+      fetchStatsAndInsights();
     }
   }, 300000); // every 5 minutes
 }
@@ -797,28 +783,21 @@ async function fetchStatsAndInsights() {
     renderDashboardKPIs(statsRes, {});
     renderBrandTypeDonut(statsRes);
 
-    // PHASE 2: Fetch insights in background
     _insightsLoading = true;
-    fetchJson('/api/insights' + qs, { signal })
-      .then(insightsRes => {
-        if (requestId !== _dashboardRequestId) return;
-        _insightsLoading = false;
-        renderDashboardKPIs(statsRes, insightsRes);
-        renderCategoryDonut(insightsRes);
-        renderPriceBandBar(insightsRes);
-        renderGeographicDemand(insightsRes);
-        renderTrendingBrands(insightsRes);
-        renderInventoryHeatmap(insightsRes);
-        renderAiMarketInsights(insightsRes);
-        renderDashboardFabrics(insightsRes);
-        renderDashboardColors(insightsRes);
-        renderDashboardTop3Products(insightsRes);
 
-        // CTO Executive Renderers
-        renderCTOPricingMetrics(insightsRes);
-        renderCTOBrandScaleMeta(insightsRes);
-        renderBrandScaleDistribution(insightsRes);
-        renderBrandValuationMatrix(insightsRes);
+    // PHASE 2: Fetch fast dashboard insights for first paint
+    fetchJson('/api/insights/light' + qs, { signal })
+      .then(lightInsightsRes => {
+        if (requestId !== _dashboardRequestId) return;
+        renderOverviewDashboardInsights(statsRes, lightInsightsRes);
+
+        // PHASE 3: Hydrate heavier widgets after the dashboard is already usable
+        return fetchJson('/api/insights' + qs, { signal })
+          .then(fullInsightsRes => {
+            if (requestId !== _dashboardRequestId) return;
+            _insightsLoading = false;
+            renderFullDashboardInsights(statsRes, fullInsightsRes);
+          });
       })
       .catch(err => {
         if (requestId !== _dashboardRequestId) return;
@@ -830,6 +809,27 @@ async function fetchStatsAndInsights() {
     if (err?.name === 'AbortError') return;
     console.error('Error loading dashboard stats:', err);
   }
+}
+
+function renderOverviewDashboardInsights(stats, insights) {
+  renderDashboardKPIs(stats, insights);
+  renderCategoryDonut(insights);
+  renderPriceBandBar(insights);
+  renderCTOPricingMetrics(insights);
+  renderCTOBrandScaleMeta(insights);
+  renderBrandScaleDistribution(insights);
+}
+
+function renderFullDashboardInsights(stats, insights) {
+  renderOverviewDashboardInsights(stats, insights);
+  renderGeographicDemand(insights);
+  renderTrendingBrands(insights);
+  renderInventoryHeatmap(insights);
+  renderAiMarketInsights(insights);
+  renderDashboardFabrics(insights);
+  renderDashboardColors(insights);
+  renderDashboardTop3Products(insights);
+  renderBrandValuationMatrix(insights);
 }
 
 let _ctoFilterDebounceTimer = null;

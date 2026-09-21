@@ -130,7 +130,7 @@ def _load_shared_cache(cache_key: str):
 def _store_shared_cache(cache_key: str, value, ttl: float):
     SHARED_API_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     path = _shared_cache_file(cache_key)
-    tmp_path = path.with_suffix(".tmp")
+    tmp_path = path.with_suffix(f".{os.getpid()}.{threading.get_ident()}.tmp")
     payload = {
         "expires_at": time.time() + ttl,
         "value": value,
@@ -690,8 +690,6 @@ def _use_exact_overview_pricing(total_products: int, filters: dict) -> bool:
     if total_products <= 50000:
         return True
     restrictive_tokens = [
-        filters.get("category"),
-        filters.get("gender"),
         filters.get("subcategory"),
         filters.get("brand"),
         filters.get("brand_type"),
@@ -1352,6 +1350,288 @@ def get_insights_facets():
     conn = db._get_connection()
     cur = conn.cursor()
     return jsonify(_get_cached_cto_facets(cur, filters))
+
+
+@app.route("/api/insights/light")
+def get_insights_light():
+    filters = _get_cto_request_filters(include_sort=True)
+    cache_key = (
+        f"insights_light_v1:{filters['category']}:{filters['gender']}:{filters['subcategory']}:"
+        f"{filters['brand']}:{filters['brand_type']}:{filters['brand_scale']}:"
+        f"{filters['price_min']}:{filters['price_max']}:{filters['sort_by']}"
+    )
+    cached_payload = _load_shared_cache(cache_key)
+    if cached_payload is not None:
+        api_cache.set(cache_key, cached_payload, ttl=600.0)
+        return jsonify(cached_payload)
+
+    conn = db._get_connection()
+    cur = conn.cursor()
+    where_sql, where_params = _build_cto_scope(filters, include_brand=True, include_subcategory=True)
+
+    cur.execute(f"""
+        SELECT 
+            COUNT(*) as total_products,
+            SUM(CASE WHEN is_in_stock = 1 THEN 1 ELSE 0 END) as in_stock,
+            AVG(selling_price) as avg_selling,
+            AVG(mrp) as avg_mrp,
+            AVG(discount_percentage) as avg_disc,
+            SUM(CASE WHEN selling_price < 500 THEN 1 ELSE 0 END) as pb0,
+            SUM(CASE WHEN selling_price >= 500 AND selling_price < 1000 THEN 1 ELSE 0 END) as pb1,
+            SUM(CASE WHEN selling_price >= 1000 AND selling_price < 2000 THEN 1 ELSE 0 END) as pb2,
+            SUM(CASE WHEN selling_price >= 2000 AND selling_price < 3500 THEN 1 ELSE 0 END) as pb3,
+            SUM(CASE WHEN selling_price >= 3500 THEN 1 ELSE 0 END) as pb4,
+            SUM(CASE WHEN category = 'Shirts' THEN 1 ELSE 0 END) as sh_cnt,
+            AVG(CASE WHEN category = 'Shirts' THEN selling_price END) as sh_price,
+            AVG(CASE WHEN category = 'Shirts' THEN discount_percentage END) as sh_disc,
+            SUM(CASE WHEN category = 'Jeans' THEN 1 ELSE 0 END) as dn_cnt,
+            AVG(CASE WHEN category = 'Jeans' THEN selling_price END) as dn_price,
+            AVG(CASE WHEN category = 'Jeans' THEN discount_percentage END) as dn_disc,
+            SUM(CASE WHEN category IN ('Western Wear', 'Dresses', 'Tops', 'Skirts', 'Jumpsuit', 'Jumpsuits') THEN 1 ELSE 0 END) as ww_cnt,
+            AVG(CASE WHEN category IN ('Western Wear', 'Dresses', 'Tops', 'Skirts', 'Jumpsuit', 'Jumpsuits') THEN selling_price END) as ww_price,
+            AVG(CASE WHEN category IN ('Western Wear', 'Dresses', 'Tops', 'Skirts', 'Jumpsuit', 'Jumpsuits') THEN discount_percentage END) as ww_disc
+        FROM products p
+        WHERE {where_sql};
+    """, where_params)
+    combined = cur.fetchone()
+
+    total_products = combined[0] or 0
+    in_stock_products = combined[1] or 0
+    avg_price = round(combined[2] or 0, 1)
+    avg_mrp_val = round(combined[3] or 0, 1)
+    avg_discount_val = round(combined[4] or 0, 1)
+
+    inventory_totals = _get_inventory_snapshot_totals(cur, where_sql, where_params)
+    latest_snapshot_date = inventory_totals["snapshot_date"]
+    total_warehouse_units = _get_scoped_inventory_units(cur, where_sql, where_params)
+    if total_warehouse_units <= 0:
+        total_warehouse_units = inventory_totals["total_units"]
+
+    price_brackets = {
+        "under_500": combined[5] or 0,
+        "500_to_1000": combined[6] or 0,
+        "1000_to_2000": combined[7] or 0,
+        "2000_to_3500": combined[8] or 0,
+        "above_3500": combined[9] or 0
+    }
+
+    shirts_real_cnt = int(combined[10] or 0)
+    shirts_price = round(combined[11] or avg_price, 1)
+    shirts_disc = round(combined[12] or avg_discount_val, 1)
+    denims_real_cnt = int(combined[13] or 0)
+    denims_price = round(combined[14] or avg_price, 1)
+    denims_disc = round(combined[15] or avg_discount_val, 1)
+    western_real_cnt = int(combined[16] or 0)
+    western_price = round(combined[17] or avg_price, 1)
+    western_disc = round(combined[18] or avg_discount_val, 1)
+    others_real_cnt = max(0, total_products - shirts_real_cnt - denims_real_cnt - western_real_cnt)
+
+    if latest_snapshot_date:
+        cur.execute(f"""
+            WITH filtered_products AS MATERIALIZED (
+                SELECT p.product_id, p.category
+                FROM products p
+                WHERE {where_sql}
+            )
+            SELECT
+                COALESCE(SUM(CASE WHEN fp.category = 'Shirts' THEN s.total_stock ELSE 0 END), 0) as shirts_units,
+                COALESCE(SUM(CASE WHEN fp.category = 'Jeans' THEN s.total_stock ELSE 0 END), 0) as denims_units,
+                COALESCE(SUM(CASE WHEN fp.category IN ('Western Wear', 'Dresses', 'Tops', 'Skirts', 'Jumpsuit', 'Jumpsuits') THEN s.total_stock ELSE 0 END), 0) as western_units,
+                COALESCE(SUM(CASE WHEN fp.category NOT IN ('Shirts', 'Jeans', 'Western Wear', 'Dresses', 'Tops', 'Skirts', 'Jumpsuit', 'Jumpsuits') THEN s.total_stock ELSE 0 END), 0) as others_units
+            FROM daily_inventory_snapshots s
+            JOIN filtered_products fp ON fp.product_id = s.product_id
+            WHERE s.snapshot_date = ?;
+        """, where_params + [latest_snapshot_date])
+        category_units_row = cur.fetchone() or {}
+    else:
+        cur.execute(f"""
+            SELECT
+                COALESCE(SUM(CASE WHEN p.category = 'Shirts' AND s.available = 1 THEN s.inventory_count ELSE 0 END), 0) as shirts_units,
+                COALESCE(SUM(CASE WHEN p.category = 'Jeans' AND s.available = 1 THEN s.inventory_count ELSE 0 END), 0) as denims_units,
+                COALESCE(SUM(CASE WHEN p.category IN ('Western Wear', 'Dresses', 'Tops', 'Skirts', 'Jumpsuit', 'Jumpsuits') AND s.available = 1 THEN s.inventory_count ELSE 0 END), 0) as western_units,
+                COALESCE(SUM(CASE WHEN p.category NOT IN ('Shirts', 'Jeans', 'Western Wear', 'Dresses', 'Tops', 'Skirts', 'Jumpsuit', 'Jumpsuits') AND s.available = 1 THEN s.inventory_count ELSE 0 END), 0) as others_units
+            FROM products p
+            LEFT JOIN product_sizes s ON s.product_id = p.product_id
+            WHERE {where_sql};
+        """, where_params)
+        category_units_row = cur.fetchone() or {}
+
+    category_comparison = {
+        "Shirts": {
+            "count": shirts_real_cnt,
+            "units": int(category_units_row["shirts_units"] or 0),
+            "avg_price": shirts_price,
+            "avg_discount": shirts_disc
+        },
+        "Denims": {
+            "count": denims_real_cnt,
+            "units": int(category_units_row["denims_units"] or 0),
+            "avg_price": denims_price,
+            "avg_discount": denims_disc
+        },
+        "Western Wear": {
+            "count": western_real_cnt,
+            "units": int(category_units_row["western_units"] or 0),
+            "avg_price": western_price,
+            "avg_discount": western_disc
+        },
+        "Others": {
+            "count": others_real_cnt,
+            "units": int(category_units_row["others_units"] or 0),
+            "avg_price": round(avg_price, 1),
+            "avg_discount": round(avg_discount_val, 1)
+        }
+    }
+
+    sample_limit = _get_adaptive_sample_limit(total_products, ceiling=2500)
+    cur.execute(f"""
+        SELECT
+            p.selling_price
+        FROM products p
+        WHERE {where_sql}
+          AND p.selling_price > 0
+        LIMIT ?;
+    """, where_params + [sample_limit])
+    sample_rows = cur.fetchall()
+    sample_prices = [_safe_float(row[0]) for row in sample_rows if _safe_float(row[0]) > 0]
+
+    cto_mean_price = avg_price
+    cto_mean_mrp = avg_mrp_val
+    cto_median_price = float(avg_price)
+    cto_p25_price = float(avg_price)
+    cto_p75_price = float(avg_price)
+    cto_mode_price = int(avg_price or 0)
+    try:
+        if _use_exact_overview_pricing(int(total_products or 0), filters):
+            cur.execute(f"""
+                SELECT
+                    COALESCE(AVG(p.selling_price), 0) AS mean_price,
+                    COALESCE(AVG(p.mrp), 0) AS mean_mrp,
+                    COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY p.selling_price), 0) AS median_price,
+                    COALESCE(PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY p.selling_price), 0) AS p25_price,
+                    COALESCE(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY p.selling_price), 0) AS p75_price,
+                    COALESCE(MODE() WITHIN GROUP (ORDER BY p.selling_price), 0) AS mode_price
+                FROM products p
+                WHERE {where_sql} AND p.selling_price > 0;
+            """, where_params)
+            cto_row = cur.fetchone() or {}
+            cto_mean_price = float(cto_row["mean_price"] or avg_price)
+            cto_mean_mrp = float(cto_row["mean_mrp"] or avg_mrp_val)
+            cto_median_price = float(cto_row["median_price"] or avg_price)
+            cto_p25_price = float(cto_row["p25_price"] or avg_price)
+            cto_p75_price = float(cto_row["p75_price"] or avg_price)
+            cto_mode_price = int(round(float(cto_row["mode_price"] or avg_price or 0)))
+        else:
+            raise RuntimeError("Use approximated broad-scope pricing shape for dashboard performance")
+    except Exception:
+        sorted_sample_prices = sorted(sample_prices)
+        if sorted_sample_prices and _use_exact_overview_pricing(int(total_products or 0), filters):
+            cto_median_price = float(_median_from_sorted(sorted_sample_prices))
+            p25_idx = min(len(sorted_sample_prices) - 1, max(0, int(round((len(sorted_sample_prices) - 1) * 0.25))))
+            p75_idx = min(len(sorted_sample_prices) - 1, max(0, int(round((len(sorted_sample_prices) - 1) * 0.75))))
+            cto_p25_price = float(sorted_sample_prices[p25_idx])
+            cto_p75_price = float(sorted_sample_prices[p75_idx])
+            _, _, _, cto_mode_price = _approximate_pricing_shape_from_brackets(avg_price, price_brackets)
+        else:
+            cto_median_price, cto_p25_price, cto_p75_price, cto_mode_price = _approximate_pricing_shape_from_brackets(avg_price, price_brackets)
+
+    use_brand_directory = not any([
+        filters["category"],
+        filters["gender"],
+        filters["brand"],
+        filters["subcategory"],
+        filters["price_min"],
+        filters["price_max"],
+    ])
+    if use_brand_directory:
+        brand_where = ["brand_name IS NOT NULL", "brand_name != ''"]
+        brand_params = []
+        if filters["brand_type"] in ("myntra", "myntra_in_house", "myntra in-house labels"):
+            brand_where.append("is_myntra_label = 1")
+        elif filters["brand_type"] in ("non-myntra", "external", "external brands"):
+            brand_where.append("is_myntra_label = 0")
+        cur.execute(f"""
+            SELECT
+                SUM(CASE WHEN total_count >= {LARGE_BRAND_MIN_PRODUCTS} THEN 1 ELSE 0 END),
+                SUM(CASE WHEN total_count >= {MID_BRAND_MIN_PRODUCTS} AND total_count < {LARGE_BRAND_MIN_PRODUCTS} THEN 1 ELSE 0 END),
+                SUM(CASE WHEN total_count < {MID_BRAND_MIN_PRODUCTS} THEN 1 ELSE 0 END),
+                SUM(CASE WHEN total_count >= {LARGE_BRAND_MIN_PRODUCTS} THEN total_count ELSE 0 END),
+                SUM(CASE WHEN total_count >= {MID_BRAND_MIN_PRODUCTS} AND total_count < {LARGE_BRAND_MIN_PRODUCTS} THEN total_count ELSE 0 END),
+                SUM(CASE WHEN total_count < {MID_BRAND_MIN_PRODUCTS} THEN total_count ELSE 0 END)
+            FROM brands
+            WHERE {' AND '.join(brand_where)};
+        """, brand_params)
+        scale_row = cur.fetchone()
+    else:
+        cur.execute(f"""
+            WITH brand_counts AS (
+                SELECT p.brand, COUNT(*) as total_count
+                FROM products p
+                WHERE {where_sql} AND p.brand IS NOT NULL AND p.brand != ''
+                GROUP BY p.brand
+            )
+            SELECT
+                SUM(CASE WHEN total_count >= {LARGE_BRAND_MIN_PRODUCTS} THEN 1 ELSE 0 END),
+                SUM(CASE WHEN total_count >= {MID_BRAND_MIN_PRODUCTS} AND total_count < {LARGE_BRAND_MIN_PRODUCTS} THEN 1 ELSE 0 END),
+                SUM(CASE WHEN total_count < {MID_BRAND_MIN_PRODUCTS} THEN 1 ELSE 0 END),
+                SUM(CASE WHEN total_count >= {LARGE_BRAND_MIN_PRODUCTS} THEN total_count ELSE 0 END),
+                SUM(CASE WHEN total_count >= {MID_BRAND_MIN_PRODUCTS} AND total_count < {LARGE_BRAND_MIN_PRODUCTS} THEN total_count ELSE 0 END),
+                SUM(CASE WHEN total_count < {MID_BRAND_MIN_PRODUCTS} THEN total_count ELSE 0 END)
+            FROM brand_counts;
+        """, where_params)
+        scale_row = cur.fetchone()
+
+    largest_cnt = (scale_row[0] if scale_row else 0) or 0
+    mid_cnt = (scale_row[1] if scale_row else 0) or 0
+    small_cnt = (scale_row[2] if scale_row else 0) or 0
+    largest_prods = (scale_row[3] if scale_row else 0) or 0
+    mid_prods = (scale_row[4] if scale_row else 0) or 0
+    small_prods = (scale_row[5] if scale_row else 0) or 0
+    total_scale_prods = max(1, largest_prods + mid_prods + small_prods)
+
+    payload = {
+        "cto_pricing": {
+            "mean_price": cto_mean_price,
+            "mean_mrp": cto_mean_mrp,
+            "median_price": cto_median_price,
+            "mode_price": cto_mode_price,
+            "p25_price": cto_p25_price,
+            "p75_price": cto_p75_price
+        },
+        "brand_scale_breakdown": {
+            "largest_brands": {"count": largest_cnt, "products": largest_prods, "share": round((largest_prods / total_scale_prods) * 100, 1)},
+            "mid_brands": {"count": mid_cnt, "products": mid_prods, "share": round((mid_prods / total_scale_prods) * 100, 1)},
+            "small_brands": {"count": small_cnt, "products": small_prods, "share": round((small_prods / total_scale_prods) * 100, 1)}
+        },
+        "brand_scale_meta": {
+            "largest_min": LARGE_BRAND_MIN_PRODUCTS,
+            "mid_min": MID_BRAND_MIN_PRODUCTS,
+            "mid_max": LARGE_BRAND_MIN_PRODUCTS - 1,
+            "largest_label": f"Largest Brands (>={LARGE_BRAND_MIN_PRODUCTS:,} SKUs)",
+            "mid_label": f"Mid-Tier Brands ({MID_BRAND_MIN_PRODUCTS:,}-{LARGE_BRAND_MIN_PRODUCTS - 1:,} SKUs)",
+            "small_label": f"Small / Emerging (<{MID_BRAND_MIN_PRODUCTS:,} SKUs)"
+        },
+        "total_products": total_products,
+        "in_stock_products": in_stock_products,
+        "in_stock_percentage": round((in_stock_products / total_products * 100), 1) if total_products > 0 else 100,
+        "total_warehouse_units": total_warehouse_units,
+        "avg_price": avg_price,
+        "avg_mrp": avg_mrp_val,
+        "avg_discount_pct": avg_discount_val,
+        "price_brackets": price_brackets,
+        "price_band_distribution": [
+            {"label": "< ₹500", "count": price_brackets["under_500"]},
+            {"label": "₹500 - 1K", "count": price_brackets["500_to_1000"]},
+            {"label": "₹1K - 2K", "count": price_brackets["1000_to_2000"]},
+            {"label": "₹2K - 3.5K", "count": price_brackets["2000_to_3500"]},
+            {"label": "> ₹3.5K", "count": price_brackets["above_3500"]}
+        ],
+        "category_comparison": category_comparison
+    }
+
+    api_cache.set(cache_key, payload, ttl=600.0)
+    _store_shared_cache(cache_key, payload, ttl=600.0)
+    return jsonify(payload)
 
 
 @app.route("/api/insights")
@@ -7709,8 +7989,10 @@ def start_cache_prewarming():
         print("⚡ Pre-warming API cache for instant 0ms responses...")
         warmers = [
             ('/api/stats', get_stats),
+            ('/api/insights/light', get_insights_light),
             ('/api/insights', get_insights),
             ('/api/insights/facets', get_insights_facets),
+            ('/api/insights/light?category=shirts&gender=men', get_insights_light),
             ('/api/insights?category=shirts&gender=men', get_insights),
             ('/api/brands/facets', get_brand_facets),
             ('/api/analytics/daily-sales-ros', get_daily_sales_ros_analytics),
