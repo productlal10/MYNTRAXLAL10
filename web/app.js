@@ -2507,11 +2507,11 @@ async function fetchBrandFacets() {
     // Brand Checkboxes
     const brandFacetList = document.getElementById('brandFacetList');
     if (brandFacetList && data.brands) {
-      brandFacetList.innerHTML = data.brands.slice(0, 30).map(b => `
+      brandFacetList.innerHTML = data.brands.map(b => `
         <label class="check-item">
-          <input type="checkbox" value="${b.brand}" onchange="onBrandCheckboxChange('${b.brand}', this.checked)" />
-          <span>${b.brand}</span>
-          <span class="cnt">${b.count}</span>
+          <input type="checkbox" value="${escapeHtml(b.brand)}" data-brand="${escapeHtml(b.brand)}" onchange="onBrandCheckboxChange(this.dataset.brand, this.checked)" />
+          <span>${escapeHtml(b.brand)}</span>
+          <span class="cnt">${Number(b.count || 0).toLocaleString('en-IN')}</span>
         </label>
       `).join('');
     }
@@ -8347,7 +8347,7 @@ async function loadPriceIntelligence() {
             .map(c => c.value)
             .filter(v => v && v !== 'all')
         );
-        const nextBrands = data.sidebar_brands.slice(0, 15);
+        const nextBrands = Array.isArray(data.sidebar_brands) ? data.sidebar_brands : [];
         const availableBrands = new Set(nextBrands.map(b => b.brand));
         const selectedBrands = Array.from(prevChecked).filter(b => availableBrands.has(b));
         const useAllBrands = selectedBrands.length === 0;

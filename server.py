@@ -331,7 +331,7 @@ def _get_brand_size_bucket_counts(cur, where_sql: str, params):
         WITH brand_counts AS (
             SELECT p.brand, COUNT(*) as cnt
             FROM products p
-            WHERE {where_sql} AND p.brand IS NOT NULL AND p.brand != ''
+            WHERE {where_sql} AND {_valid_brand_sql("p")}
             GROUP BY p.brand
         )
         SELECT
@@ -753,6 +753,26 @@ def _subcategory_facets(cur, where_sql: str, params, category: str):
             "name": f"{raw_name} ({int(row['cnt'] or 0):,})"
         })
     return facets
+
+
+def _valid_brand_sql(alias: str = "p") -> str:
+    return f"{alias}.brand IS NOT NULL AND BTRIM({alias}.brand) != '' AND LOWER(BTRIM({alias}.brand)) != 'all'"
+
+
+def _fetch_brand_counts(cur, where_sql: str, params, alias: str = "p", order: str = "count_desc", limit: int | None = None):
+    if order == "alpha":
+        order_sql = f"LOWER({alias}.brand) ASC, cnt DESC"
+    else:
+        order_sql = f"cnt DESC, LOWER({alias}.brand) ASC"
+    limit_sql = f" LIMIT {int(limit)}" if limit and int(limit) > 0 else ""
+    cur.execute(f"""
+        SELECT {alias}.brand AS brand, COUNT(*) AS cnt
+        FROM products {alias}
+        WHERE {where_sql} AND {_valid_brand_sql(alias)}
+        GROUP BY {alias}.brand
+        ORDER BY {order_sql}{limit_sql};
+    """, params)
+    return cur.fetchall()
 
 
 def _apply_sustainability_filter(base_where_sql: str, base_params, sustainability: str, alias: str = "p"):
@@ -1245,14 +1265,6 @@ def _build_cto_scope(filters, include_brand=True, include_subcategory=True, incl
 
 
 def _load_cto_facets(cur, filters):
-    use_brand_directory = not any([
-        filters.get("category"),
-        filters.get("gender"),
-        filters.get("subcategory"),
-        filters.get("brand_scale"),
-        filters.get("price_min"),
-        filters.get("price_max"),
-    ])
     subcategory_scope_sql, subcategory_scope_params = _build_cto_scope(
         filters,
         include_brand=True,
@@ -1276,36 +1288,10 @@ def _load_cto_facets(cur, filters):
         for r in cur.fetchall()
     ]
 
-    if use_brand_directory:
-        brand_where = ["brand_name IS NOT NULL", "brand_name != ''"]
-        brand_params = []
-        filter_brand_type = filters.get("brand_type", "")
-        if filter_brand_type in ("myntra", "myntra_in_house", "myntra in-house labels"):
-            brand_where.append("is_myntra_label = 1")
-        elif filter_brand_type in ("non-myntra", "external", "external brands"):
-            brand_where.append("is_myntra_label = 0")
-        cur.execute(f"""
-            SELECT brand_name, total_count
-            FROM brands
-            WHERE {' AND '.join(brand_where)}
-            ORDER BY LOWER(brand_name) ASC;
-        """, brand_params)
-        available_brands = [
-            {"name": r[0], "count": int(r[1] or 0)}
-            for r in cur.fetchall()
-        ]
-    else:
-        cur.execute(f"""
-            SELECT p.brand, COUNT(*) as cnt
-            FROM products p
-            WHERE {brand_scope_sql} AND p.brand IS NOT NULL AND p.brand != ''
-            GROUP BY p.brand
-            ORDER BY LOWER(p.brand) ASC;
-        """, brand_scope_params)
-        available_brands = [
-            {"name": r[0], "count": int(r[1] or 0)}
-            for r in cur.fetchall()
-        ]
+    available_brands = [
+        {"name": row["brand"], "count": int(row["cnt"] or 0)}
+        for row in _fetch_brand_counts(cur, brand_scope_sql, brand_scope_params, order="alpha")
+    ]
 
     return {
         "available_subcategories": available_subcategories,
@@ -1329,7 +1315,7 @@ def _load_cto_facets(cur, filters):
 
 def _get_cto_facets_cache_key(filters):
     return (
-        f"insights_facets:{filters['category']}:{filters['gender']}:{filters['subcategory']}:"
+        f"insights_facets_v2:{filters['category']}:{filters['gender']}:{filters['subcategory']}:"
         f"{filters['brand']}:{filters['brand_type']}:{filters['brand_scale']}:{filters['price_min']}:{filters['price_max']}"
     )
 
@@ -1544,13 +1530,19 @@ def get_insights_light():
         filters["price_max"],
     ])
     if use_brand_directory:
-        brand_where = ["brand_name IS NOT NULL", "brand_name != ''"]
+        brand_where = [_valid_brand_sql("p")]
         brand_params = []
         if filters["brand_type"] in ("myntra", "myntra_in_house", "myntra in-house labels"):
-            brand_where.append("is_myntra_label = 1")
+            brand_where.append("p.is_myntra_label = 1")
         elif filters["brand_type"] in ("non-myntra", "external", "external brands"):
-            brand_where.append("is_myntra_label = 0")
+            brand_where.append("p.is_myntra_label = 0")
         cur.execute(f"""
+            WITH brand_counts AS (
+                SELECT p.brand, COUNT(*) as total_count
+                FROM products p
+                WHERE {' AND '.join(brand_where)}
+                GROUP BY p.brand
+            )
             SELECT
                 SUM(CASE WHEN total_count >= {LARGE_BRAND_MIN_PRODUCTS} THEN 1 ELSE 0 END),
                 SUM(CASE WHEN total_count >= {MID_BRAND_MIN_PRODUCTS} AND total_count < {LARGE_BRAND_MIN_PRODUCTS} THEN 1 ELSE 0 END),
@@ -1558,8 +1550,7 @@ def get_insights_light():
                 SUM(CASE WHEN total_count >= {LARGE_BRAND_MIN_PRODUCTS} THEN total_count ELSE 0 END),
                 SUM(CASE WHEN total_count >= {MID_BRAND_MIN_PRODUCTS} AND total_count < {LARGE_BRAND_MIN_PRODUCTS} THEN total_count ELSE 0 END),
                 SUM(CASE WHEN total_count < {MID_BRAND_MIN_PRODUCTS} THEN total_count ELSE 0 END)
-            FROM brands
-            WHERE {' AND '.join(brand_where)};
+            FROM brand_counts;
         """, brand_params)
         scale_row = cur.fetchone()
     else:
@@ -1567,7 +1558,7 @@ def get_insights_light():
             WITH brand_counts AS (
                 SELECT p.brand, COUNT(*) as total_count
                 FROM products p
-                WHERE {where_sql} AND p.brand IS NOT NULL AND p.brand != ''
+                WHERE {where_sql} AND {_valid_brand_sql("p")}
                 GROUP BY p.brand
             )
             SELECT
@@ -1876,7 +1867,7 @@ def get_insights():
             ROUND(AVG(p.discount_percentage), 1) as avg_discount,
             ROUND(AVG(p.average_rating), 1) as avg_rating
         FROM products p
-        WHERE {where_sql} AND p.brand IS NOT NULL AND p.brand != ''
+        WHERE {where_sql} AND {_valid_brand_sql("p")}
         GROUP BY p.brand, p.is_myntra_label
         ORDER BY product_count DESC
         LIMIT 10;
@@ -2267,13 +2258,19 @@ def get_insights():
         filter_price_max,
     ])
     if use_brand_directory:
-        brand_where = ["brand_name IS NOT NULL", "brand_name != ''"]
+        brand_where = [_valid_brand_sql("p")]
         brand_params = []
         if filter_brand_type in ("myntra", "myntra_in_house", "myntra in-house labels"):
-            brand_where.append("is_myntra_label = 1")
+            brand_where.append("p.is_myntra_label = 1")
         elif filter_brand_type in ("non-myntra", "external", "external brands"):
-            brand_where.append("is_myntra_label = 0")
+            brand_where.append("p.is_myntra_label = 0")
         cur.execute(f"""
+            WITH brand_counts AS (
+                SELECT p.brand, COUNT(*) as total_count
+                FROM products p
+                WHERE {' AND '.join(brand_where)}
+                GROUP BY p.brand
+            )
             SELECT
                 SUM(CASE WHEN total_count >= {LARGE_BRAND_MIN_PRODUCTS} THEN 1 ELSE 0 END),
                 SUM(CASE WHEN total_count >= {MID_BRAND_MIN_PRODUCTS} AND total_count < {LARGE_BRAND_MIN_PRODUCTS} THEN 1 ELSE 0 END),
@@ -2281,8 +2278,7 @@ def get_insights():
                 SUM(CASE WHEN total_count >= {LARGE_BRAND_MIN_PRODUCTS} THEN total_count ELSE 0 END),
                 SUM(CASE WHEN total_count >= {MID_BRAND_MIN_PRODUCTS} AND total_count < {LARGE_BRAND_MIN_PRODUCTS} THEN total_count ELSE 0 END),
                 SUM(CASE WHEN total_count < {MID_BRAND_MIN_PRODUCTS} THEN total_count ELSE 0 END)
-            FROM brands
-            WHERE {' AND '.join(brand_where)};
+            FROM brand_counts;
         """, brand_params)
         scale_row = cur.fetchone()
     else:
@@ -2290,7 +2286,7 @@ def get_insights():
             WITH brand_counts AS (
                 SELECT p.brand, COUNT(*) as total_count
                 FROM products p
-                WHERE {where_sql} AND p.brand IS NOT NULL AND p.brand != ''
+                WHERE {where_sql} AND {_valid_brand_sql("p")}
                 GROUP BY p.brand
             )
             SELECT
@@ -3805,7 +3801,7 @@ def get_brands():
     brand_type = request.args.get("brand_type")
     search = request.args.get("search", "").strip()
 
-    cache_key = f"brands_list:{page}:{per_page}:{brand_type}:{search}"
+    cache_key = f"brands_list_v2:{page}:{per_page}:{brand_type}:{search}"
     cached = api_cache.get(cache_key)
     if cached:
         return jsonify(cached)
@@ -3813,51 +3809,55 @@ def get_brands():
     conn = db._get_connection()
     cur = conn.cursor()
 
-    where = "WHERE 1=1"
+    where_parts = [_valid_brand_sql("p")]
     params = []
 
     if brand_type == "myntra":
-        where += " AND is_myntra_label = 1"
+        where_parts.append("p.is_myntra_label = 1")
     elif brand_type == "non-myntra":
-        where += " AND is_myntra_label = 0"
+        where_parts.append("p.is_myntra_label = 0")
 
     if search:
-        where += " AND brand_name LIKE ?"
+        where_parts.append("p.brand LIKE ?")
         params.append(f"%{search}%")
+    where_sql = " AND ".join(where_parts)
 
-    cur.execute(f"SELECT COUNT(*) FROM brands {where}", params)
-    total = cur.fetchone()[0]
+    rollup_sql = f"""
+        WITH brand_rollup AS (
+            SELECT
+                p.brand AS brand_name,
+                COALESCE(
+                    MAX(NULLIF(p.brand_type, '')),
+                    CASE WHEN MAX(COALESCE(p.is_myntra_label, 0)) = 1 THEN 'Myntra In-House Label' ELSE 'External Brand' END
+                ) AS brand_type,
+                MAX(COALESCE(p.is_myntra_label, 0)) AS is_myntra_label,
+                SUM(CASE WHEN p.category = 'Shirts' THEN 1 ELSE 0 END) AS shirts_count,
+                SUM(CASE WHEN p.category = 'Jeans' THEN 1 ELSE 0 END) AS denims_count,
+                SUM(CASE WHEN p.category IN ('Western Wear', 'Dresses', 'Tops', 'Skirts', 'Jumpsuit') THEN 1 ELSE 0 END) AS western_count,
+                COUNT(*) AS total_count
+            FROM products p
+            WHERE {where_sql}
+            GROUP BY p.brand
+        )
+    """
 
-    cur.execute("""
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_schema = current_schema()
-          AND table_name = 'brands'
-          AND column_name = 'western_count'
-        LIMIT 1;
-    """)
-    has_western = cur.fetchone() is not None
-
-    select_cols = "brand_name, brand_type, is_myntra_label, shirts_count, denims_count"
-    if has_western:
-        select_cols += ", western_count, total_count"
-    else:
-        select_cols += ", 0 as western_count, total_count"
+    cur.execute(f"{rollup_sql} SELECT COUNT(*) FROM brand_rollup;", params)
+    total = int((cur.fetchone() or [0])[0] or 0)
 
     cur.execute(
-        f"SELECT {select_cols} FROM brands {where} ORDER BY brand_name ASC LIMIT ? OFFSET ?",
+        f"{rollup_sql} SELECT brand_name, brand_type, is_myntra_label, shirts_count, denims_count, western_count, total_count FROM brand_rollup ORDER BY LOWER(brand_name) ASC LIMIT ? OFFSET ?",
         params + [per_page, (page - 1) * per_page]
     )
     rows = cur.fetchall()
     brands = [
         {
-            "brand_name": r[0],
-            "brand_type": r[1],
-            "is_myntra_label": bool(r[2]),
-            "shirts_count": r[3],
-            "denims_count": r[4],
-            "western_count": r[5],
-            "total_count": r[6]
+            "brand_name": r["brand_name"],
+            "brand_type": r["brand_type"],
+            "is_myntra_label": bool(r["is_myntra_label"]),
+            "shirts_count": int(r["shirts_count"] or 0),
+            "denims_count": int(r["denims_count"] or 0),
+            "western_count": int(r["western_count"] or 0),
+            "total_count": int(r["total_count"] or 0)
         }
         for r in rows
     ]
@@ -3893,7 +3893,7 @@ def search_catalog_brands():
     new_arrivals = request.args.get("new_arrivals", "").strip()
 
     cache_key = (
-        "brands_search_v2:"
+        "brands_search_v3:"
         f"{q}:{category.lower()}:{gender.lower()}:{subcategory.lower()}:"
         f"{price_min}:{price_max}:{price_ranges}:{brand_size}:{brand_type}:"
         f"{color}:{fabric}:{fit}:{discount_min}:{rating_min}:{availability}:{new_arrivals}"
@@ -3928,22 +3928,20 @@ def search_catalog_brands():
             FROM products p
             WHERE {where_sql}
               AND LOWER(p.brand) LIKE ?
-              AND p.brand IS NOT NULL
-              AND p.brand != ''
+              AND {_valid_brand_sql("p")}
             GROUP BY brand
-            ORDER BY cnt DESC
-            LIMIT 30;
+            ORDER BY cnt DESC, LOWER(brand) ASC
+            LIMIT 100;
         """, params + [f"%{q}%"])
     else:
         cur.execute(f"""
             SELECT brand, COUNT(*) as cnt
             FROM products p
             WHERE {where_sql}
-              AND p.brand IS NOT NULL
-              AND p.brand != ''
+              AND {_valid_brand_sql("p")}
             GROUP BY brand
-            ORDER BY cnt DESC
-            LIMIT 40;
+            ORDER BY cnt DESC, LOWER(brand) ASC
+            LIMIT 250;
         """, params)
     rows = cur.fetchall()
     result = {"status": "success", "brands": [{"brand": r[0], "count": r[1]} for r in rows]}
@@ -3998,7 +3996,7 @@ def get_brand_comparator():
         cur.execute(f"""
             SELECT p.brand
             FROM products p
-            WHERE {comp_where} AND p.brand IS NOT NULL AND p.brand != ''
+            WHERE {comp_where} AND {_valid_brand_sql("p")}
             GROUP BY p.brand
             ORDER BY COUNT(*) DESC, p.brand ASC
             LIMIT ?;
@@ -4971,15 +4969,7 @@ def _build_scope_sidebar_counts(cur, filters: dict):
     subcategories = _subcategory_facets(cur, subcat_where_sql, subcat_params, filters.get("category") or "all")
 
     brand_where_sql, brand_params = build_where(brand=None)
-    cur.execute(f"""
-        SELECT p.brand, COUNT(*) as cnt
-        FROM products p
-        WHERE {brand_where_sql} AND p.brand IS NOT NULL AND p.brand != ''
-        GROUP BY p.brand
-        ORDER BY cnt DESC, p.brand ASC
-        LIMIT 50;
-    """, brand_params)
-    brand_rows = cur.fetchall()
+    brand_rows = _fetch_brand_counts(cur, brand_where_sql, brand_params, order="count_desc")
 
     color_where_sql, color_params = build_where(color=None)
     cur.execute(f"""
@@ -5053,7 +5043,7 @@ def _build_scope_sidebar_counts(cur, filters: dict):
     }
 
 
-def _build_filter_counts_payload(cur, filters: dict, sustainability: str | None = None, brand_limit: int = 20,
+def _build_filter_counts_payload(cur, filters: dict, sustainability: str | None = None, brand_limit: int | None = None,
                                  include_subcategories: bool = True):
     def build_where(**overrides):
         scoped = dict(filters)
@@ -5098,15 +5088,8 @@ def _build_filter_counts_payload(cur, filters: dict, sustainability: str | None 
     price_row = cur.fetchone() or {}
 
     brand_where_sql, brand_params = build_where(brand=None)
-    cur.execute(f"""
-        SELECT brand, COUNT(*) as cnt
-        FROM products p
-        WHERE {brand_where_sql} AND brand IS NOT NULL AND brand != ''
-        GROUP BY brand
-        ORDER BY cnt DESC, brand ASC;
-    """, brand_params)
-    all_brand_rows = cur.fetchall()
-    brand_rows = all_brand_rows[:int(brand_limit)]
+    all_brand_rows = _fetch_brand_counts(cur, brand_where_sql, brand_params, order="count_desc")
+    brand_rows = all_brand_rows if brand_limit is None else all_brand_rows[:int(brand_limit)]
 
     subcategories = []
     if include_subcategories:
@@ -5160,7 +5143,7 @@ def get_category_intelligence():
     availability = request.args.get("availability")
     new_arrivals = request.args.get("new_arrivals")
 
-    cache_key = f"cat_intel_v4:{category.lower()}:{gender.lower()}:{subcategory}:{price_min}:{price_max}:{price_ranges}:{brand_size}:{brand_type}:{brand}:{color}:{fabric}:{fit}:{discount_min}:{rating_min}:{availability}:{new_arrivals}"
+    cache_key = f"cat_intel_v5:{category.lower()}:{gender.lower()}:{subcategory}:{price_min}:{price_max}:{price_ranges}:{brand_size}:{brand_type}:{brand}:{color}:{fabric}:{fit}:{discount_min}:{rating_min}:{availability}:{new_arrivals}"
     cached = api_cache.get(cache_key)
     if cached:
         return jsonify(cached)
@@ -5233,41 +5216,65 @@ def get_category_intelligence():
     mode_price = _price_band_midpoint(most_comp_bracket, mean_price)
 
     cur.execute(f"""
-        SELECT p.brand, p.is_myntra_label, p.brand_type, COUNT(*) as b_cnt
+        SELECT 
+            p.brand, 
+            p.is_myntra_label, 
+            p.brand_type, 
+            COUNT(*) as b_cnt, 
+            ROUND(AVG(p.selling_price)) as avg_price,
+            ROUND((PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY p.selling_price))::numeric) as median_price,
+            ROUND(AVG(p.discount_percentage), 1) as b_disc
         FROM products p
-        WHERE {where_sql} AND p.brand IS NOT NULL AND p.brand != ''
+        WHERE {where_sql} AND {_valid_brand_sql("p")} AND p.selling_price > 0
         GROUP BY p.brand, p.is_myntra_label, p.brand_type
-        ORDER BY b_cnt DESC
-        LIMIT 1;
+        ORDER BY b_cnt DESC, p.brand ASC;
     """, params)
-    top_b_row = cur.fetchone()
+    all_b_rows = cur.fetchall()
+
+    top_b_row = all_b_rows[0] if all_b_rows else None
     top_brand_name = top_b_row["brand"] if top_b_row else "Leading Brand"
     top_brand_prods = int(top_b_row["b_cnt"] or 0) if top_b_row else 0
     top_brand_type = top_b_row["brand_type"] or ("Myntra In-House Label" if top_b_row and top_b_row["is_myntra_label"] else "External Brand") if top_b_row else "Brand"
     is_top_brand_myntra = bool(top_b_row["is_myntra_label"]) if top_b_row else False
 
     cur.execute(f"""
-        SELECT 
-            p.brand, 
-            p.is_myntra_label, 
-            p.brand_type, 
-            COUNT(*) as b_cnt, 
-            ROUND(AVG(p.selling_price)) as b_asp,
-            ROUND(AVG(p.discount_percentage), 1) as b_disc
-        FROM products p
-        WHERE {where_sql} AND p.brand IS NOT NULL AND p.brand != ''
-        GROUP BY p.brand, p.is_myntra_label, p.brand_type
-        ORDER BY b_cnt DESC;
+        WITH filtered_products AS MATERIALIZED (
+            SELECT p.brand, p.selling_price
+            FROM products p
+            WHERE {where_sql} AND {_valid_brand_sql("p")} AND p.selling_price > 0
+        ),
+        brand_counts AS (
+            SELECT brand, COUNT(*) as cnt
+            FROM filtered_products
+            GROUP BY brand
+        ),
+        tiered_prices AS (
+            SELECT
+                CASE
+                    WHEN bc.cnt >= {LARGE_BRAND_MIN_PRODUCTS} THEN 'largest'
+                    WHEN bc.cnt >= {MID_BRAND_MIN_PRODUCTS} THEN 'mid'
+                    ELSE 'small'
+                END as tier,
+                fp.selling_price
+            FROM filtered_products fp
+            JOIN brand_counts bc ON bc.brand = fp.brand
+        )
+        SELECT tier, ROUND((PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY selling_price))::numeric) as median_price
+        FROM tiered_prices
+        GROUP BY tier;
     """, params)
-    all_b_rows = cur.fetchall()
+    tier_price_map = {row["tier"]: int(row["median_price"] or 0) for row in cur.fetchall()}
 
     top_brands = []
-    large_b, mid_b, small_b = [], [], []
+    large_brand_count = 0
+    mid_brand_count = 0
+    small_brand_count = 0
     large_prods, mid_prods, small_prods = 0, 0, 0
 
     for rank, r in enumerate(all_b_rows, 1):
         b_cnt = int(r["b_cnt"] or 0)
-        asp = int(r["b_asp"] or 0)
+        avg_brand_price = int(r["avg_price"] or 0)
+        brand_median_price = int(r["median_price"] or avg_brand_price or 0)
         disc = float(r["b_disc"] or 0.0)
         is_myntra = bool(r["is_myntra_label"])
         b_type = r["brand_type"] or ("Myntra In-House Label" if is_myntra else "External Brand")
@@ -5281,38 +5288,38 @@ def get_category_intelligence():
                 "brand_type": b_type,
                 "products": b_cnt,
                 "share": f"{share}%",
-                "median_price": f"₹{asp:,}",
-                "avg_price": f"₹{asp:,}",
+                "median_price": f"₹{brand_median_price:,}",
+                "avg_price": f"₹{avg_brand_price:,}",
                 "avg_discount": f"{disc}%"
             })
         if b_cnt >= LARGE_BRAND_MIN_PRODUCTS:
-            large_b.append(asp)
+            large_brand_count += 1
             large_prods += b_cnt
         elif b_cnt >= MID_BRAND_MIN_PRODUCTS:
-            mid_b.append(asp)
+            mid_brand_count += 1
             mid_prods += b_cnt
         else:
-            small_b.append(asp)
+            small_brand_count += 1
             small_prods += b_cnt
 
     brand_scale = {
         "largest": {
             "label": f"Largest Brands (>={LARGE_BRAND_MIN_PRODUCTS:,})",
-            "brand_count": len(large_b),
+            "brand_count": large_brand_count,
             "product_count": large_prods,
-            "median_price": f"₹{int(sum(large_b)/max(1, len(large_b))):,}" if large_b else "₹0"
+            "median_price": f"₹{tier_price_map.get('largest', 0):,}" if large_brand_count else "₹0"
         },
         "mid": {
             "label": f"Mid-size Brands ({MID_BRAND_MIN_PRODUCTS:,}-{LARGE_BRAND_MIN_PRODUCTS - 1:,})",
-            "brand_count": len(mid_b),
+            "brand_count": mid_brand_count,
             "product_count": mid_prods,
-            "median_price": f"₹{int(sum(mid_b)/max(1, len(mid_b))):,}" if mid_b else "₹0"
+            "median_price": f"₹{tier_price_map.get('mid', 0):,}" if mid_brand_count else "₹0"
         },
         "small": {
             "label": f"Small Brands (<{MID_BRAND_MIN_PRODUCTS:,})",
-            "brand_count": len(small_b),
+            "brand_count": small_brand_count,
             "product_count": small_prods,
-            "median_price": f"₹{int(sum(small_b)/max(1, len(small_b))):,}" if small_b else "₹0"
+            "median_price": f"₹{tier_price_map.get('small', 0):,}" if small_brand_count else "₹0"
         }
     }
 
@@ -5734,25 +5741,17 @@ def get_fabric_intelligence():
             })
 
     # Fabric x Brand Heatmap: Top brands across normalized fabric columns
-    cur.execute(f"""
-        SELECT p.brand, COUNT(*) as b_cnt
-        FROM products p
-        WHERE {where_sql}
-        GROUP BY p.brand
-        ORDER BY b_cnt DESC, p.brand ASC
-        LIMIT 30;
-    """, params)
-    brand_count_rows = cur.fetchall()
+    brand_count_rows = _fetch_brand_counts(cur, where_sql, params, order="count_desc")
     top_5_brands = [r["brand"] for r in brand_count_rows[:5]]
     brand_options = [
-        {"brand": r["brand"], "count": int(r["b_cnt"] or 0)}
-        for r in brand_count_rows[:30]
+        {"brand": r["brand"], "count": int(r["cnt"] or 0)}
+        for r in brand_count_rows
         if r["brand"]
     ]
     brand_size_counts = {
-        "large": sum(1 for r in brand_count_rows if int(r["b_cnt"] or 0) >= LARGE_BRAND_MIN_PRODUCTS),
-        "mid": sum(1 for r in brand_count_rows if MID_BRAND_MIN_PRODUCTS <= int(r["b_cnt"] or 0) < LARGE_BRAND_MIN_PRODUCTS),
-        "small": sum(1 for r in brand_count_rows if int(r["b_cnt"] or 0) < MID_BRAND_MIN_PRODUCTS)
+        "large": sum(1 for r in brand_count_rows if int(r["cnt"] or 0) >= LARGE_BRAND_MIN_PRODUCTS),
+        "mid": sum(1 for r in brand_count_rows if MID_BRAND_MIN_PRODUCTS <= int(r["cnt"] or 0) < LARGE_BRAND_MIN_PRODUCTS),
+        "small": sum(1 for r in brand_count_rows if int(r["cnt"] or 0) < MID_BRAND_MIN_PRODUCTS)
     }
     heatmap_columns = ["Cotton", "Cotton Blend", "Polyester", "Linen", "Viscose", "Denim", "Others"]
     heatmap_matrix = []
@@ -5886,7 +5885,7 @@ def get_brands_intelligence():
     availability = request.args.get("availability", "").strip()
     new_arrivals = request.args.get("new_arrivals", "").strip()
 
-    cache_key = f"brands_intel_v7:{category.lower()}:{gender.lower()}:{subcategory}:{price_min}:{price_max}:{price_ranges}:{brand_size}:{brand_type}:{brand}:{color}:{fabric}:{fit}:{discount_min}:{rating_min}:{availability}:{new_arrivals}"
+    cache_key = f"brands_intel_v8:{category.lower()}:{gender.lower()}:{subcategory}:{price_min}:{price_max}:{price_ranges}:{brand_size}:{brand_type}:{brand}:{color}:{fabric}:{fit}:{discount_min}:{rating_min}:{availability}:{new_arrivals}"
     cached = _load_shared_cache(cache_key)
     if cached is not None:
         api_cache.set(cache_key, cached, ttl=300.0)
@@ -5976,21 +5975,7 @@ def get_brands_intelligence():
 
     peak_bracket = max(price_dist, key=lambda b: b["count"])["label"]
 
-    use_exact_price_shape = (
-        total_prods <= 50000
-        or bool(scope_filters["subcategory"] and scope_filters["subcategory"] != "all")
-        or bool(scope_filters["brand"])
-        or bool(scope_filters["color"])
-        or bool(scope_filters["fabric"])
-        or bool(scope_filters["fit"])
-        or bool(scope_filters["price_min"])
-        or bool(scope_filters["price_max"])
-        or bool(scope_filters["price_ranges"])
-        or bool(scope_filters["discount_min"])
-        or bool(scope_filters["rating_min"])
-        or bool(scope_filters["availability"])
-        or bool(scope_filters["new_arrivals"])
-    )
+    use_exact_price_shape = True
 
     is_default_scope = not any([
         bool(scope_filters["subcategory"] and scope_filters["subcategory"] != "all"),
@@ -6009,98 +5994,30 @@ def get_brands_intelligence():
         bool(scope_filters["new_arrivals"])
     ])
 
-    if use_exact_price_shape:
-        cur.execute(f"""
-            SELECT
-                ROUND((PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY p.selling_price))::numeric),
-                COALESCE(MODE() WITHIN GROUP (ORDER BY ROUND(p.selling_price)), ROUND(AVG(p.selling_price)))
-            FROM products p
-            WHERE {active_where_sql} AND p.selling_price > 0;
-        """, active_params)
-        price_shape_row = cur.fetchone() or {}
-        median_price = _safe_int(price_shape_row[0], mean_price)
-        mode_price = _safe_int(price_shape_row[1], median_price or mean_price)
-    else:
-        weighted_price_points = [
-            (399, p_lt_500),
-            (750, p_500_1k),
-            (1500, p_1k_2k),
-            (2500, p_2k_3k),
-            (3500, p_3k_4k),
-            (4500, p_gt_4k)
-        ]
-        total_weight = sum(weight for _, weight in weighted_price_points)
-        if total_weight > 0:
-            midpoint = total_weight / 2
-            running = 0
-            median_price = mean_price
-            for price_point, weight in weighted_price_points:
-                running += weight
-                if running >= midpoint:
-                    median_price = price_point
-                    break
-        else:
-            median_price = mean_price
-        mode_price = max(weighted_price_points, key=lambda item: item[1])[0] if weighted_price_points else mean_price
+    cur.execute(f"""
+        SELECT
+            ROUND((PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY p.selling_price))::numeric),
+            COALESCE(MODE() WITHIN GROUP (ORDER BY ROUND(p.selling_price)), ROUND(AVG(p.selling_price)))
+        FROM products p
+        WHERE {active_where_sql} AND p.selling_price > 0;
+    """, active_params)
+    price_shape_row = cur.fetchone() or {}
+    median_price = _safe_int(price_shape_row[0], mean_price)
+    mode_price = _safe_int(price_shape_row[1], median_price or mean_price)
 
     # 2. All Brands (computes top brand, scale breakdown, and top 10 table with true medians)
-    if use_exact_price_shape:
-        cur.execute(f"""
-            WITH filtered_products AS MATERIALIZED (
-                SELECT p.brand, p.selling_price, COALESCE(p.discount_percentage, 0) as discount_percentage
-                FROM products p
-                WHERE {active_where_sql}
-            ),
-            brand_counts AS (
-                SELECT
-                    fp.brand,
-                    COUNT(*) as cnt,
-                    ROUND(AVG(fp.selling_price)) as avg_price,
-                    ROUND(AVG(fp.discount_percentage), 1) as avg_discount
-                FROM filtered_products fp
-                WHERE fp.brand IS NOT NULL AND fp.brand != ''
-                GROUP BY fp.brand
-            ),
-            brand_ranked_prices AS (
-                SELECT
-                    fp.brand,
-                    fp.selling_price,
-                    ROW_NUMBER() OVER (PARTITION BY fp.brand ORDER BY fp.selling_price) as rn,
-                    COUNT(*) OVER (PARTITION BY fp.brand) as total_rows
-                FROM filtered_products fp
-                WHERE fp.brand IS NOT NULL AND fp.brand != '' AND fp.selling_price > 0
-            ),
-            brand_medians AS (
-                SELECT
-                    brand,
-                    ROUND(AVG(selling_price)) as median_price
-                FROM brand_ranked_prices
-                WHERE rn IN ((total_rows + 1) / 2, (total_rows + 2) / 2)
-                GROUP BY brand
-            )
-            SELECT
-                bc.brand,
-                bc.cnt,
-                bc.avg_price,
-                bc.avg_discount,
-                COALESCE(bm.median_price, bc.avg_price, 0) as median_price
-            FROM brand_counts bc
-            LEFT JOIN brand_medians bm ON bm.brand = bc.brand
-            ORDER BY bc.cnt DESC, bc.brand ASC;
-        """, active_params)
-    else:
-        cur.execute(f"""
-            SELECT
-                p.brand,
-                COUNT(*) as cnt,
-                ROUND(AVG(p.selling_price)) as avg_price,
-                ROUND(AVG(COALESCE(p.discount_percentage, 0)), 1) as avg_discount,
-                ROUND(AVG(p.selling_price)) as median_price
-            FROM products p
-            WHERE {active_where_sql} AND p.brand IS NOT NULL AND p.brand != ''
-            GROUP BY p.brand
-            ORDER BY cnt DESC, p.brand ASC;
-        """, active_params)
+    cur.execute(f"""
+        SELECT
+            p.brand,
+            COUNT(*) as cnt,
+            ROUND(AVG(p.selling_price)) as avg_price,
+            ROUND(AVG(COALESCE(p.discount_percentage, 0)), 1) as avg_discount,
+            ROUND((PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY p.selling_price))::numeric) as median_price
+        FROM products p
+        WHERE {active_where_sql} AND {_valid_brand_sql("p")} AND p.selling_price > 0
+        GROUP BY p.brand
+        ORDER BY cnt DESC, p.brand ASC;
+    """, active_params)
     all_b_rows = cur.fetchall()
 
     top_brand_name = all_b_rows[0]["brand"] if all_b_rows else ""
@@ -6110,50 +6027,36 @@ def get_brands_intelligence():
     mid_b = [r for r in all_b_rows if MID_BRAND_MIN_PRODUCTS <= int(r["cnt"]) < LARGE_BRAND_MIN_PRODUCTS]
     small_b = [r for r in all_b_rows if int(r["cnt"]) < MID_BRAND_MIN_PRODUCTS]
 
-    if use_exact_price_shape:
-        cur.execute(f"""
-            WITH filtered_products AS MATERIALIZED (
-                SELECT p.brand, p.selling_price
-                FROM products p
-                WHERE {active_where_sql} AND p.brand IS NOT NULL AND p.brand != '' AND p.selling_price > 0
-            ),
-            brand_counts AS (
-                SELECT brand, COUNT(*) as cnt
-                FROM filtered_products
-                GROUP BY brand
-            ),
-            tiered_prices AS (
-                SELECT
-                    CASE
-                        WHEN bc.cnt >= {LARGE_BRAND_MIN_PRODUCTS} THEN 'largest'
-                        WHEN bc.cnt >= {MID_BRAND_MIN_PRODUCTS} THEN 'midsize'
-                        ELSE 'small'
-                    END as tier,
-                    fp.selling_price
-                FROM filtered_products fp
-                JOIN brand_counts bc ON bc.brand = fp.brand
-            ),
-            ranked_tier_prices AS (
-                SELECT
-                    tier,
-                    selling_price,
-                    ROW_NUMBER() OVER (PARTITION BY tier ORDER BY selling_price) as rn,
-                    COUNT(*) OVER (PARTITION BY tier) as total_rows
-                FROM tiered_prices
-            )
-            SELECT tier, ROUND(AVG(selling_price)) as median_price
-            FROM ranked_tier_prices
-            WHERE rn IN ((total_rows + 1) / 2, (total_rows + 2) / 2)
-            GROUP BY tier;
-        """, active_params)
-        tier_price_map = {row["tier"]: int(row["median_price"] or 0) for row in cur.fetchall()}
-        large_med = tier_price_map.get("largest", 0)
-        mid_med = tier_price_map.get("midsize", 0)
-        small_med = tier_price_map.get("small", 0)
-    else:
-        large_med = int(round(sum(_safe_float(r["avg_price"]) for r in large_b) / max(1, len(large_b)))) if large_b else 0
-        mid_med = int(round(sum(_safe_float(r["avg_price"]) for r in mid_b) / max(1, len(mid_b)))) if mid_b else 0
-        small_med = int(round(sum(_safe_float(r["avg_price"]) for r in small_b) / max(1, len(small_b)))) if small_b else 0
+    cur.execute(f"""
+        WITH filtered_products AS MATERIALIZED (
+            SELECT p.brand, p.selling_price
+            FROM products p
+            WHERE {active_where_sql} AND {_valid_brand_sql("p")} AND p.selling_price > 0
+        ),
+        brand_counts AS (
+            SELECT brand, COUNT(*) as cnt
+            FROM filtered_products
+            GROUP BY brand
+        ),
+        tiered_prices AS (
+            SELECT
+                CASE
+                    WHEN bc.cnt >= {LARGE_BRAND_MIN_PRODUCTS} THEN 'largest'
+                    WHEN bc.cnt >= {MID_BRAND_MIN_PRODUCTS} THEN 'midsize'
+                    ELSE 'small'
+                END as tier,
+                fp.selling_price
+            FROM filtered_products fp
+            JOIN brand_counts bc ON bc.brand = fp.brand
+        )
+        SELECT tier, ROUND((PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY selling_price))::numeric) as median_price
+        FROM tiered_prices
+        GROUP BY tier;
+    """, active_params)
+    tier_price_map = {row["tier"]: int(row["median_price"] or 0) for row in cur.fetchall()}
+    large_med = tier_price_map.get("largest", 0)
+    mid_med = tier_price_map.get("midsize", 0)
+    small_med = tier_price_map.get("small", 0)
 
     brands_by_scale = {
         "largest": {
@@ -6276,7 +6179,7 @@ def get_brands_intelligence():
                 },
                 "subcategories": _subcategory_facets(cur, subcat_where_sql, subcat_params, scope_filters.get("category") or "all"),
                 "available_filters": {
-                    "brands": [{"brand": r["brand"], "count": int(r["cnt"] or 0)} for r in all_b_rows[:50]],
+                    "brands": [{"brand": r["brand"], "count": int(r["cnt"] or 0)} for r in all_b_rows],
                     "colors": [{
                         "color": color["color"],
                         "hex": color["hex"],
@@ -6493,7 +6396,7 @@ def get_price_intelligence():
     discount_range = request.args.get("discount_range", "").strip()
     availability = request.args.get("availability", "all").strip().lower()
 
-    cache_key = f"price_intel_v3:{cat}:{subcat}:{gender}:{brands_param}:{price_min}:{price_max}:{fabric}:{color}:{discount_range}:{availability}"
+    cache_key = f"price_intel_v4:{cat}:{subcat}:{gender}:{brands_param}:{price_min}:{price_max}:{fabric}:{color}:{discount_range}:{availability}"
     cached = api_cache.get(cache_key)
     if cached:
         return jsonify(cached)
@@ -6805,7 +6708,7 @@ def get_price_intelligence():
                 p.selling_price,
                 COALESCE(p.discount_percentage, 0) AS discount_percentage
             FROM products p
-            WHERE {where_sql} AND p.brand IS NOT NULL AND p.brand != ''
+            WHERE {where_sql} AND {_valid_brand_sql("p")}
         ),
         top_brands AS (
             SELECT
@@ -6970,7 +6873,7 @@ def get_price_intelligence():
                     ELSE NULL
                 END AS bucket
             FROM products p
-            WHERE {where_sql} AND p.brand IS NOT NULL AND p.brand != '' AND p.selling_price > 0
+            WHERE {where_sql} AND {_valid_brand_sql("p")} AND p.selling_price > 0
         ),
         top_brands AS (
             SELECT brand, COUNT(*) AS cnt
@@ -7047,7 +6950,7 @@ def get_price_intelligence():
                 ROW_NUMBER() OVER (PARTITION BY p.brand ORDER BY p.selling_price) AS rn,
                 COUNT(*) OVER (PARTITION BY p.brand) AS total_rows
             FROM products p
-            WHERE {where_sql} AND p.brand IS NOT NULL AND p.brand != '' AND p.selling_price > 0
+            WHERE {where_sql} AND {_valid_brand_sql("p")} AND p.selling_price > 0
         ),
         brand_counts AS (
             SELECT brand, COUNT(*) AS product_count
@@ -7078,7 +6981,7 @@ def get_price_intelligence():
             ROUND(AVG(COALESCE(p.discount_percentage, 0)), 1) AS avg_discount,
             COUNT(*) AS product_count
         FROM products p
-        WHERE {where_sql} AND p.brand IS NOT NULL AND p.brand != ''
+        WHERE {where_sql} AND {_valid_brand_sql("p")}
         GROUP BY p.brand
         HAVING COUNT(*) >= 5
         ORDER BY avg_discount DESC, product_count DESC
@@ -7244,15 +7147,10 @@ def get_price_intelligence():
 
     # 13. Available filter options for sidebar
     brand_where_sql, brand_params = build_price_scope(include_brands=False)
-    cur.execute(f"""
-        SELECT p.brand, COUNT(*) as cnt
-        FROM products p
-        WHERE {brand_where_sql} AND p.brand IS NOT NULL AND p.brand != ''
-        GROUP BY p.brand
-        ORDER BY cnt DESC, p.brand ASC
-        LIMIT 25;
-    """, brand_params)
-    sidebar_brands = [{"brand": r["brand"], "count": int(r["cnt"] or 0)} for r in cur.fetchall()]
+    sidebar_brands = [
+        {"brand": r["brand"], "count": int(r["cnt"] or 0)}
+        for r in _fetch_brand_counts(cur, brand_where_sql, brand_params, order="count_desc")
+    ]
 
     res_data = {
         "status": "success",
@@ -8072,7 +7970,7 @@ def get_filter_counts():
     tab = request.args.get("tab", "all").strip()
     sections = (request.args.get("sections") or "").strip().lower()
 
-    cache_key = f"filter_counts_v2:{sections}:{category}:{gender}:{subcategory}:{price_min}:{price_max}:{price_ranges}:{brand_size}:{brand_type}:{brand}:{color}:{fabric}:{fit}:{discount_min}:{rating_min}:{availability}:{new_arrivals}:{sustainability}:{search}:{tab}"
+    cache_key = f"filter_counts_v3:{sections}:{category}:{gender}:{subcategory}:{price_min}:{price_max}:{price_ranges}:{brand_size}:{brand_type}:{brand}:{color}:{fabric}:{fit}:{discount_min}:{rating_min}:{availability}:{new_arrivals}:{sustainability}:{search}:{tab}"
     res = get_or_compute_cached_payload(
         cache_key,
         lambda: _build_filter_counts_payload(db._get_connection().cursor(), {
@@ -8103,20 +8001,14 @@ def get_filter_counts():
 
 @app.route("/api/brands/facets")
 def get_brand_facets():
-    cached = api_cache.get("brands_facets")
+    cached = api_cache.get("brands_facets_v2")
     if cached:
         return jsonify(cached)
 
     conn = db._get_connection()
     cur = conn.cursor()
-    cur.execute("""
-        SELECT brand_name, total_count
-        FROM brands
-        WHERE brand_name IS NOT NULL AND brand_name != ''
-        ORDER BY total_count DESC
-        LIMIT 40;
-    """)
-    brands = [{"brand": r[0], "count": r[1]} for r in cur.fetchall()]
+    brand_rows = _fetch_brand_counts(cur, "1=1", [], order="count_desc")
+    brands = [{"brand": row["brand"], "count": int(row["cnt"] or 0)} for row in brand_rows]
 
     cur.execute("SELECT category, COUNT(*) FROM products GROUP BY category;")
     cat_counts = dict(cur.fetchall())
@@ -8136,7 +8028,7 @@ def get_brand_facets():
     }
 
     result = {"brands": brands, "categories": categories_facets}
-    api_cache.set("brands_facets", result, ttl=3600.0)
+    api_cache.set("brands_facets_v2", result, ttl=3600.0)
     return jsonify(result)
 
 
