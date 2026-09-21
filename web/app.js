@@ -29,6 +29,15 @@ function displayCount(value, fallback = '-') {
   return num === null ? fallback : num.toLocaleString('en-IN');
 }
 
+function formatCurrencyCompactIN(value, fallback = '—') {
+  const num = toNumberOrNull(value);
+  if (num === null) return fallback;
+  if (num >= 10000000) return `₹${(num / 10000000).toFixed(2)} Cr`;
+  if (num >= 100000) return `₹${(num / 100000).toFixed(2)} L`;
+  if (num >= 1000) return `₹${(num / 1000).toFixed(1)} K`;
+  return `₹${Math.round(num).toLocaleString('en-IN')}`;
+}
+
 function formatDateLabel(value, fallback = '—') {
   if (!value) return fallback;
   const date = new Date(value);
@@ -926,6 +935,12 @@ function renderCTOPricingMetrics(insights) {
   setTxt('ctoMedianPriceVal', p.median_price > 0 ? `₹${Math.round(p.median_price).toLocaleString()}` : '₹0');
   setTxt('ctoModePriceVal', p.mode_price > 0 ? `₹${Math.round(p.mode_price).toLocaleString()}` : '₹0');
   setTxt('ctoIqrPriceVal', (p.p25_price > 0 && p.p75_price > 0) ? `₹${Math.round(p.p25_price).toLocaleString()} – ₹${Math.round(p.p75_price).toLocaleString()}` : '₹0 – ₹0');
+  setTxt(
+    'ctoPriceScopeMeta',
+    p.mean_price > 0 || p.median_price > 0
+      ? `Scope mean ${p.mean_price > 0 ? `₹${Math.round(p.mean_price).toLocaleString('en-IN')}` : '—'} | median ${p.median_price > 0 ? `₹${Math.round(p.median_price).toLocaleString('en-IN')}` : '—'}`
+      : 'Scope mean — | median —'
+  );
 }
 
 function renderBrandScaleDistribution(insights) {
@@ -1221,7 +1236,10 @@ function renderBrandValuationMatrix(insights) {
       <td style="font-weight:700;color:#0f172a;">${escapeHtml(b.brand)}</td>
       <td><span class="badge-tag" style="background:#f1f5f9;color:#334155;font-size:10.5px;">${b.scale_tier}</span></td>
       <td>${(b.skus || 0).toLocaleString()}</td>
-      <td style="font-weight:600;">₹${Math.round(b.mean_price || 0).toLocaleString()}</td>
+      <td>
+        <div style="font-weight:700;color:#0f172a;">₹${Math.round(b.mean_price || 0).toLocaleString('en-IN')}</div>
+        <div style="font-size:10px;color:#64748b;margin-top:2px;">Median ₹${Math.round(b.median_price || 0).toLocaleString('en-IN')}</div>
+      </td>
       <td style="font-weight:750;color:#0f172a;">₹${Math.round(b.inventory_valuation || 0).toLocaleString()}</td>
     </tr>
   `).join('');
@@ -1286,15 +1304,35 @@ function renderDashboardKPIs(stats, insights) {
   const avgUnits = total > 0 && totalUnits && totalUnits > 0 ? Math.round(totalUnits / total) : 0;
   setTxt('kpiAvgUnitsSku', avgUnits > 0 ? `Avg ~${avgUnits.toLocaleString()} units per SKU` : 'Waiting for inventory sync');
 
-  // KPI 4: Avg Selling Price — real from DB
-  const avgPrice = Math.round(Number(stats.average_price || insights.avg_price || 0));
-  const avgMrp = Math.round(Number(insights.avg_mrp || stats.average_mrp || 0));
-  setTxt('kpiAvgPrice', `₹${avgPrice.toLocaleString()}`);
-  const priceTrendEl = document.getElementById('kpiTrendPrice');
-  formatTrendBadge(priceTrendEl, trends.price_delta_pct);
-  setTxt('kpiAvgMrp', `MRP ₹${avgMrp.toLocaleString()} (Avg)`);
+  // KPI 4: Inventory Valuation — live scoped stock value
+  const valuation = Number(insights.inventory_valuation?.total_stock_value || 0);
+  const valuationMrp = Number(insights.inventory_valuation?.total_mrp_value || 0);
+  setTxt('kpiInventoryValuation', valuation > 0 ? formatCurrencyCompactIN(valuation) : '—');
+  setTxt('kpiInventoryValuationSub', valuationMrp > 0 ? `MRP value ${formatCurrencyCompactIN(valuationMrp)}` : 'Sell-side stock value');
 
-  // KPI 5: Average Discount — real from DB
+  // KPI 5: Mean Selling Price — real from DB
+  const meanPriceRaw = insights.cto_pricing?.mean_price ?? stats.average_price ?? insights.avg_price ?? 0;
+  const avgPrice = Math.round(Number(meanPriceRaw || 0));
+  const avgMrp = Math.round(Number(insights.avg_mrp || stats.average_mrp || 0));
+  setTxt('kpiMeanPrice', `₹${avgPrice.toLocaleString('en-IN')}`);
+  const priceTrendEl = document.getElementById('kpiTrendMeanPrice');
+  formatTrendBadge(priceTrendEl, trends.price_delta_pct);
+  const iqrLow = Number(insights.cto_pricing?.p25_price || 0);
+  const iqrHigh = Number(insights.cto_pricing?.p75_price || 0);
+  setTxt(
+    'kpiMeanPriceSub',
+    iqrLow > 0 && iqrHigh > 0
+      ? `Middle 50%: ₹${Math.round(iqrLow).toLocaleString('en-IN')} – ₹${Math.round(iqrHigh).toLocaleString('en-IN')}`
+      : `MRP ₹${avgMrp.toLocaleString('en-IN')} (Avg)`
+  );
+
+  // KPI 6: Median Selling Price — center price read
+  const medianPrice = Math.round(Number(insights.cto_pricing?.median_price || 0));
+  const modePrice = Math.round(Number(insights.cto_pricing?.mode_price || 0));
+  setTxt('kpiMedianPrice', medianPrice > 0 ? `₹${medianPrice.toLocaleString('en-IN')}` : '—');
+  setTxt('kpiMedianPriceSub', modePrice > 0 ? `Most common price ₹${modePrice.toLocaleString('en-IN')}` : '50th percentile price');
+
+  // KPI 7: Average Discount — real from DB
   const avgDisc = insights.avg_discount_pct !== undefined ? Number(insights.avg_discount_pct) : Number(stats.average_discount || 0);
   setTxt('kpiAvgDiscount', `${avgDisc}% OFF`);
   const discTrendEl = document.getElementById('kpiTrendDiscount');
@@ -1312,7 +1350,7 @@ function renderDashboardKPIs(stats, insights) {
   setTxt('catTotalProds', total > 0 ? total.toLocaleString() : '0');
   formatTrendBadge(document.getElementById('catTrendProds'), trends.products_delta_pct);
   setTxt('catInStockSub', `In-Stock (${inStockPct}%)`);
-  setTxt('catAvgPrice', avgPrice > 0 ? `₹${avgPrice.toLocaleString()}` : '₹0');
+  setTxt('catAvgPrice', avgPrice > 0 ? `₹${avgPrice.toLocaleString('en-IN')}` : '₹0');
   formatTrendBadge(document.getElementById('catTrendPrice'), trends.price_delta_pct, true);
   setTxt('catAvgMrp', avgMrp > 0 ? `MRP ₹${avgMrp.toLocaleString()} (Avg)` : '');
   setTxt('catAvgDiscount', avgDisc > 0 ? `${avgDisc}% OFF` : '0% OFF');

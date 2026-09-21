@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='20' font-size='20'>🏮</text></svg>">
-  <link rel="stylesheet" href="styles.css?v=4.0" />
+  <link rel="stylesheet" href="styles.css?v=4.1" />
 </head>
 <body class="app-layout">
   <!-- LEFT SIDEBAR -->
@@ -294,6 +294,7 @@
                   <input type="number" id="ctoPriceMax" placeholder="Max ₹" min="0" step="50" onchange="syncCTOInputsToSlider()" />
                 </div>
                 <div class="cto-filter-help">Enter custom price range</div>
+                <div class="cto-filter-help cto-price-scope-meta" id="ctoPriceScopeMeta">Scope mean — | median —</div>
               </div>
             </div>
 
@@ -359,8 +360,10 @@
                   <option value="valuation_desc">Inventory Valuation (High → Low)</option>
                   <option value="revenue_desc">GMV Revenue (High → Low)</option>
                   <option value="skus_desc">Total SKUs (High → Low)</option>
-                  <option value="median_desc">Average Price (High → Low)</option>
-                  <option value="median_asc">Average Price (Low → High)</option>
+                  <option value="mean_desc">Mean Price (High → Low)</option>
+                  <option value="mean_asc">Mean Price (Low → High)</option>
+                  <option value="median_desc">Median Price (High → Low)</option>
+                  <option value="median_asc">Median Price (Low → High)</option>
                 </select>
                 <div class="cto-filter-help">Sort brands by key business metrics</div>
               </div>
@@ -396,7 +399,7 @@
           </div>
         </div>
 
-        <!-- 5 KPI Cards Row -->
+        <!-- Overview KPI Cards -->
         <div class="kpi-cards-grid">
           <div class="kpi-card">
             <div class="kpi-top">
@@ -446,16 +449,46 @@
           <div class="kpi-card">
             <div class="kpi-top">
               <div class="kpi-icon-wrap">
+                <span style="font-weight: 800; font-size: 14px; color: #0f172a;">₹×</span>
+              </div>
+              <button class="kpi-menu-dots" title="Options">⋮</button>
+            </div>
+            <span class="kpi-label">INVENTORY VALUATION</span>
+            <div class="kpi-main">
+              <span class="kpi-value" id="kpiInventoryValuation">Loading...</span>
+              <span class="kpi-trend neutral" id="kpiTrendValuation">Live</span>
+            </div>
+            <div class="kpi-sub" id="kpiInventoryValuationSub">Sell-side stock value</div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-top">
+              <div class="kpi-icon-wrap">
                 <span style="font-weight: 700; font-size: 16px; color: #0f172a;">₹</span>
               </div>
               <button class="kpi-menu-dots" title="Options">⋮</button>
             </div>
-            <span class="kpi-label">AVG SELLING PRICE</span>
+            <span class="kpi-label">MEAN SELLING PRICE</span>
             <div class="kpi-main">
-              <span class="kpi-value" id="kpiAvgPrice">Loading...</span>
-              <span class="kpi-trend positive" id="kpiTrendPrice">--</span>
+              <span class="kpi-value" id="kpiMeanPrice">Loading...</span>
+              <span class="kpi-trend positive" id="kpiTrendMeanPrice">--</span>
             </div>
-            <div class="kpi-sub" id="kpiAvgMrp">Calculating...</div>
+            <div class="kpi-sub" id="kpiMeanPriceSub">Calculating...</div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-top">
+              <div class="kpi-icon-wrap">
+                <span style="font-weight: 700; font-size: 16px; color: #0f172a;">½</span>
+              </div>
+              <button class="kpi-menu-dots" title="Options">⋮</button>
+            </div>
+            <span class="kpi-label">MEDIAN SELLING PRICE</span>
+            <div class="kpi-main">
+              <span class="kpi-value" id="kpiMedianPrice">Loading...</span>
+              <span class="kpi-trend neutral" id="kpiTrendMedianPrice">Live</span>
+            </div>
+            <div class="kpi-sub" id="kpiMedianPriceSub">Calculating...</div>
           </div>
 
           <div class="kpi-card">
@@ -791,7 +824,7 @@
                       <th>Brand</th>
                       <th>Scale</th>
                       <th>SKUs</th>
-                      <th>Mean ASP</th>
+                      <th>Mean / Median</th>
                       <th>Valuation (₹)</th>
                     </tr>
                   </thead>
@@ -4575,6 +4608,6 @@
   </div>
 
   <script src="chart.min.js"></script>
-  <script src="app.js?v=6.2"></script>
+  <script src="app.js?v=6.3"></script>
 </body>
 </html>

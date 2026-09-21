@@ -2015,7 +2015,8 @@ def get_insights():
             p.brand,
             COUNT(*) AS sku_count,
             ROUND(AVG(COALESCE(p.selling_price, 0)), 1) AS mean_price,
-            ROUND(AVG(COALESCE(p.mrp, 0)), 1) AS mean_mrp
+            ROUND(AVG(COALESCE(p.mrp, 0)), 1) AS mean_mrp,
+            ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY COALESCE(p.selling_price, 0)), 1) AS median_price
         FROM products p
         WHERE {where_sql}
           AND p.brand IS NOT NULL
@@ -2367,6 +2368,7 @@ def get_insights():
         b_skus = int(r["sku_count"] or 0)
         b_mean_price = float(r["mean_price"] or 0.0)
         b_mean_mrp = float(r["mean_mrp"] or 0.0)
+        b_median_price = float(r["median_price"] or b_mean_price or 0.0)
         b_total_units = stock_units_by_brand.get(b_name, 0)
         b_sales_units = units_sold_by_brand.get(b_name, 0)
         b_revenue = revenue_by_brand.get(b_name, 0.0)
@@ -2385,7 +2387,7 @@ def get_insights():
             "scale_tier": scale_tier,
             "mean_price": b_mean_price,
             "mean_mrp": b_mean_mrp,
-            "median_price": b_mean_price,
+            "median_price": b_median_price,
             "inventory_units": b_total_units,
             "inventory_valuation": b_valuation,
             "units_sold": b_sales_units,
@@ -2398,10 +2400,14 @@ def get_insights():
         brand_valuation_matrix.sort(key=lambda x: x["revenue"])
     elif filter_sort_by == "skus_desc":
         brand_valuation_matrix.sort(key=lambda x: x["skus"], reverse=True)
-    elif filter_sort_by == "median_desc":
+    elif filter_sort_by == "mean_desc":
         brand_valuation_matrix.sort(key=lambda x: x["mean_price"], reverse=True)
-    elif filter_sort_by == "median_asc":
+    elif filter_sort_by == "mean_asc":
         brand_valuation_matrix.sort(key=lambda x: x["mean_price"])
+    elif filter_sort_by == "median_desc":
+        brand_valuation_matrix.sort(key=lambda x: x["median_price"], reverse=True)
+    elif filter_sort_by == "median_asc":
+        brand_valuation_matrix.sort(key=lambda x: x["median_price"])
     elif filter_sort_by == "valuation_desc":
         brand_valuation_matrix.sort(key=lambda x: x["inventory_valuation"], reverse=True)
     elif filter_sort_by == "valuation_asc":
@@ -2430,6 +2436,7 @@ def get_insights():
         "in_stock_products": in_stock_products,
         "in_stock_percentage": round((in_stock_products / total_products * 100), 1) if total_products > 0 else 100,
         "total_warehouse_units": total_warehouse_units,
+        "inventory_valuation": inventory_valuation,
         "avg_price": avg_price,
         "avg_mrp": avg_mrp_val,
         "avg_discount_pct": avg_discount_val,

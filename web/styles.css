@@ -458,11 +458,11 @@ body {
 }
 
 /* ==========================================================================
-   KPI STAT CARDS (5 Cards in a Row - Image 1)
+   KPI STAT CARDS
    ========================================================================== */
 .kpi-cards-grid {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 16px;
   margin-bottom: 22px;
 }
@@ -512,6 +512,11 @@ body {
 
 .kpi-menu-dots:hover {
   color: #0f172a;
+}
+
+.cto-price-scope-meta {
+  color: #475569;
+  font-weight: 600;
 }
 
 .kpi-label {
@@ -6652,4 +6657,3 @@ input:checked + .slider:before {
   transform: scale(1.18);
   background: #0284c7;
 }
-
